@@ -4,7 +4,7 @@
 
 PROJECT_NAME = nomination_predictor
 PYTHON_VERSION = 3.13.5
-PYTHON_INTERPRETER = python
+PYTHON_INTERPRETER = python3.13
 
 #################################################################################
 # COMMANDS                                                                      #
