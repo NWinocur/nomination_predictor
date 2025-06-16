@@ -1,0 +1,49 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "nomination_predictor"
+version = "0.0.1"
+description = "A project created for presentation at the end of 4geeks' Data Science and Machine Learning cohort Miami-ds-10"
+authors = [
+  { name = "Nicolas Winocur" },
+]
+
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    
+]
+dependencies = [
+    "ipython",
+    "jupyterlab",
+    "loguru",
+    "matplotlib",
+    "mkdocs",
+    "notebook",
+    "numpy",
+    "pandas",
+    "pip",
+    "pytest",
+    "python-dotenv",
+    "ruff",
+    "scikit-learn",
+    "tqdm",
+    "typer",
+]
+requires-python = "==3.13.5"
+
+
+[tool.ruff]
+line-length = 99
+src = ["nomination_predictor"]
+include = ["pyproject.toml", "nomination_predictor/**/*.py"]
+
+[tool.ruff.lint]
+extend-select = ["I"]  # Add import sorting
+
+[tool.ruff.lint.isort]
+known-first-party = ["nomination_predictor"]
+force-sort-within-sections = true
+
