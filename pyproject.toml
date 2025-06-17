@@ -24,6 +24,7 @@ dependencies = [
     "notebook",
     "numpy",
     "pandas",
+    "pandas-stubs",
     "pip",
     "pytest",
     "python-dotenv",
