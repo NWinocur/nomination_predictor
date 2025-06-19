@@ -59,3 +59,31 @@ A project created for presentation at the end of 4geeks' Data Science and Machin
 
 --------
 
+## Tests
+
+## 🔌 Test Fixtures: Judicial Vacancy Pages
+
+Some of this project's test cases uses locally-downloaded copies of real HTML pages from [uscourts.gov](https://www.uscourts.gov/data-news/judicial-vacancies/archive-judicial-vacancies) as test fixtures to validate data-scraping behavior.
+
+### 🧪 Fixture Location
+Fixture files are saved in:
+
+```
+tests/fixtures/pages
+```
+
+These are used by the test suite for deterministic, offline testing.
+
+### 🚫 Not Version Controlled
+Due to their size (~371MB total), these files are **not committed to Git**. If cloning the repository fresh and wanting to run tests, you’ll need to regenerate them.
+
+### 📥 Regenerate Fixtures
+
+To re-download all year/month-level HTML files:
+
+```bash
+python tests/fixtures/download_fixture_pages.py
+```
+
+This will populate tests/fixtures/pages/ with HTML documents across the full range of years.
+

@@ -1,6 +1,7 @@
 # Data
 /data/*
 !data/make_dataset.py
+tests/fixtures/pages/
 
 # Mac OS-specific storage files
 .DS_Store
