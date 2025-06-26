@@ -1,4 +1,4 @@
-# nomination_predictor
+# Judicial Nomination Predictor
 
 <a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
     <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
@@ -93,3 +93,53 @@ python tests/fixtures/download_fixture_pages.py
 
 This will populate tests/fixtures/pages/ with HTML documents across the full range of years.
 
+# Run flake8
+flake8 data tests
+
+# Run black (code formatter)
+black data tests
+
+# Run isort (import sorter)
+isort data tests
+
+```
+
+## Project Structure
+
+```
+├── .github/               # GitHub workflows and issue templates
+├── data/
+│   ├── external/         # Data from third party sources
+│   ├── interim/          # Intermediate data that has been transformed
+│   ├── processed/        # The final, canonical data sets for modeling
+│   └── raw/              # The original, immutable data dump
+├── docs/                 # Documentation
+├── models/               # Trained and serialized models
+├── notebooks/            # Jupyter notebooks for exploration
+├── references/           # Data dictionaries, manuals, etc.
+├── reports/              # Generated analysis and visualizations
+└── nomination_predictor/ # Source code
+    ├── __init__.py
+    ├── config.py         # Configuration settings
+    ├── data/             # Data processing code
+    ├── features/         # Feature engineering
+    ├── models/           # Model training and evaluation
+    └── visualization/    # Visualization code
+```
+
+## Data Dictionary
+
+See [references/data_dictionary.md](references/data_dictionary.md) for a detailed description of the data fields.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Acknowledgments
+
+- Data source: [US Courts - Judicial Vacancies](https://www.uscourts.gov/judges-judgeships/judicial-vacancies)
+- Project structure based on [Cookiecutter Data Science](https://drivendata.github.io/cookiecutter-data-science/)
