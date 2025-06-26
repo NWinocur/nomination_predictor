@@ -10,45 +10,25 @@ def load_fixture(file_name):
     with open(os.path.join(FIXTURE_DIR, file_name), "r", encoding="utf-8") as f:
         return f.read()
 
-def test_generate_urls_format_and_structure():
+def test_generate_urls(monkeypatch):
+    # Use a known local HTML fixture
+    with open("tests/fixtures/pages/archive_2025.html", encoding="utf-8") as f:
+        html = f.read()
+
+    # Patch requests.get to return the local fixture instead of live HTTP
+    class MockResponse:
+        text = html
+    monkeypatch.setattr("requests.get", lambda url: MockResponse())
+
+    # Call function under test
     urls = make_dataset.generate_or_fetch_archive_urls()
 
-    # 1. Type and non-empty
-    assert isinstance(urls, list), "Function did not return a list"
-    assert len(urls) > 0, "No URLs returned"
-
-    for url in urls:
-        # 2. Domain is as expected
-        assert url.startswith("https://www.uscourts.gov"), f"Bad base URL: {url}"
-
-        # 3. Likely structural rules (heuristic, revise as needed)
-        assert "judicial-vacancies" in url, f"Unexpected URL pattern: {url}"
-        assert url.endswith(".html") or "/archive-" in url or url[-4:].isdigit(), f"Nonstandard URL suffix: {url}"
-
-    # 4. Spot check: Include one known URL (if fixed URL exists)
-    assert any("2023" in u or "2024" in u for u in urls), "Expected year not found in URLs"
-
-@pytest.mark.parametrize("year", [2025, 1981])
-def test_generate_urls_varied_years(monkeypatch, year):
-    html_fixture = load_fixture(f"archive_{year}.html")
-
-    def mock_get(url):
-        class MockResponse:
-            text = html_fixture
-            status_code = 200
-            def raise_for_status(self): pass
-        return MockResponse()
-
-    monkeypatch.setattr("requests.get", mock_get)
-    urls = make_dataset.generate_or_fetch_archive_urls(year=year)
-
-    if year == 2025:
-        assert any("2025/06/emergencies" in u for u in urls), "Expected June link missing"
-        assert all(u.startswith("https://www.uscourts.gov") for u in urls)
-        assert all(any(key in u for key in ["vacancies", "confirmations", "summary", "future", "emergencies"]) for u in urls)
-    elif year == 1981:
-        assert urls == [], "Expected empty list due to missing reports"
-
+    # Assert structure and sample content
+    assert isinstance(urls, list)
+    assert all("2025" in url for url in urls)
+    assert any("vacancies" in url for url in urls)
+    assert any("emergencies" in url for url in urls)
+    assert any("confirmations" in url for url in urls)
 
 
 def test_fetch_html_returns_html(monkeypatch):

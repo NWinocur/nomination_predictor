@@ -6,6 +6,12 @@
 
 A project created for presentation at the end of 4geeks' Data Science and Machine Learning cohort Miami-ds-10
 
+This project does the following:
+
+1. Scrapes the US Courts website for information about judicial vacancies
+2. Builds a machine learning model to predict the likely time estimate until a nomination is confirmed for a judicial vacancy
+3. Builds a Streamlit webapp with which users can obtain estimates given their inputs (e.g. the type of vacancy, the court, the circuit, etc.) for an existing or hypothetical vacancy.
+
 ## Project Organization
 
 ```
