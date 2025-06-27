@@ -373,14 +373,35 @@ def test_save_to_csv(tmp_path):
     make_dataset.save_to_csv(test_df, output_file)
     assert output_file.stat().st_mtime > original_mtime, "File should be overwritten"
 
-@patch('data.make_dataset.Path')
-def test_save_to_csv_error(mock_path, sample_dataframe):
-    """Test error handling when saving CSV."""
-    # Setup mock to raise an error
-    mock_path.return_value.parent.mkdir.side_effect = PermissionError("Permission denied")
+def test_save_to_csv_error(tmp_path):
+    """Test error handling when saving CSV with various error conditions."""
+    # Arrange
+    test_df = pd.DataFrame({
+        'Seat': [1, 2],
+        'Court': ['9th Circuit', 'DC Circuit'],
+        'Status': ['Pending', 'Pending']
+    })
     
-    with pytest.raises(IOError, match="Permission denied"):
-        make_dataset.save_to_csv(sample_dataframe, "/invalid/path/output.csv")
+    # Test directory creation permission error
+    with patch('data.make_dataset.Path.mkdir') as mock_mkdir:
+        mock_mkdir.side_effect = PermissionError("Permission denied")
+        with pytest.raises(IOError, match="Failed to create directory"):
+            make_dataset.save_to_csv(test_df, "/invalid/path/output.csv")
+    
+    # Test file write permission error
+    with patch('pandas.DataFrame.to_csv') as mock_to_csv:
+        mock_to_csv.side_effect = PermissionError("Permission denied")
+        with pytest.raises(IOError, match="Error saving DataFrame to"):
+            output_file = tmp_path / "output.csv"
+            make_dataset.save_to_csv(test_df, output_file)
+    
+    # Test invalid DataFrame input
+    with pytest.raises(ValueError, match="Expected pandas DataFrame"):
+        make_dataset.save_to_csv("not a dataframe", tmp_path / "output.csv")
+    
+    # Test invalid path type
+    with pytest.raises(TypeError, match="path must be a string or Path"):
+        make_dataset.save_to_csv(test_df, 12345)  # Invalid path type
 
 @patch('data.make_dataset.generate_or_fetch_archive_urls')
 @patch('data.make_dataset.fetch_html')

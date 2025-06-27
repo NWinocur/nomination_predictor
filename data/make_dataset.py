@@ -298,6 +298,7 @@ def save_to_csv(df: pd.DataFrame, path: Union[str, Path]) -> None:
         path: The file path where the CSV will be saved
 
     Raises:
+        TypeError: If path is not a string or Path object
         ValueError: If the input is not a pandas DataFrame
         IOError: If the file cannot be written to the specified path
 
@@ -305,10 +306,17 @@ def save_to_csv(df: pd.DataFrame, path: Union[str, Path]) -> None:
         >>> df = pd.DataFrame({"A": [1, 2], "B": [3, 4]})
         >>> save_to_csv(df, "output.csv")
     """
+    # Input validation
     if not isinstance(df, pd.DataFrame):
         error_msg = f"Expected pandas DataFrame, got {type(df).__name__}"
         logger.error(error_msg)
         raise ValueError(error_msg)
+
+    # Validate path type
+    if not isinstance(path, (str, Path)):
+        error_msg = f"path must be a string or Path, got {type(path).__name__}"
+        logger.error(error_msg)
+        raise TypeError(error_msg)
 
     try:
         # Convert to Path object if it's a string
@@ -320,16 +328,22 @@ def save_to_csv(df: pd.DataFrame, path: Union[str, Path]) -> None:
         except OSError as e:
             error_msg = f"Failed to create directory {path.parent}: {e}"
             logger.error(error_msg)
-            raise IOError(str(e)) from e
+            raise IOError(error_msg) from e
             
         # Save the DataFrame to CSV
-        df.to_csv(path, index=False)
-        logger.info(f"Successfully saved data to {path}")
-        
+        try:
+            df.to_csv(path, index=False)
+            logger.info(f"Successfully saved data to {path}")
+        except (OSError, IOError) as e:
+            error_msg = f"Error saving DataFrame to {path}: {e}"
+            logger.error(error_msg)
+            raise IOError(error_msg) from e
+            
     except Exception as e:
-        error_msg = f"Error saving DataFrame to {path}: {e}"
+        # Catch any other unexpected errors
+        error_msg = f"Unexpected error when saving to {path}: {e}"
         logger.error(error_msg)
-        raise IOError(str(e)) from e
+        raise IOError(error_msg) from e
 
 
 def main() -> None:
