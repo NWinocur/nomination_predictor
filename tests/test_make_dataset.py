@@ -117,10 +117,30 @@ def test_extract_vacancy_table():
     assert records[1]["Seat"] == "2"
     assert records[1]["Court"] == "DC Circuit"
 
-def test_extract_vacancy_table_empty():
-    """Test table extraction with empty HTML."""
-    records = make_dataset.extract_vacancy_table("<html></html>")
-    assert records == []
+def test_extract_vacancy_table_complete_data():
+    """Test extraction with all possible fields"""
+    html = """
+    <table>
+        <tr>
+            <th>Court</th>
+            <th>Vacancy Date</th>
+            <th>Nominating President</th>
+            <th>Nominee</th>
+            <th>Status</th>
+        </tr>
+        <tr>
+            <td>9th Circuit</td>
+            <td>01/15/2024</td>
+            <td>Biden</td>
+            <td>John Smith</td>
+            <td>Pending Hearing</td>
+        </tr>
+    </table>
+    """
+    result = make_dataset.extract_vacancy_table(html)
+    assert len(result) == 1
+    assert result[0]["court"] == "9th Circuit"
+    assert result[0]["status"] == "Pending Hearing"
 
 def test_records_to_dataframe(sample_dataframe):
     """Test DataFrame conversion."""
