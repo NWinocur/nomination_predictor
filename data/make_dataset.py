@@ -11,6 +11,8 @@ data transformation, and file I/O operations.
     >>> records = make_dataset.extract_vacancy_table(html)
     >>> df = make_dataset.records_to_dataframe(records)
     >>> make_dataset.save_to_csv(df, "judicial_vacancies.csv")
+    
+Raw CSV files are then saved to the project's `data/raw` directory.
 
 For more information about the data source, visit:
 https://www.uscourts.gov/data-news/judicial-vacancies/archive-judicial-vacancies

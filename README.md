@@ -102,8 +102,6 @@ black data tests
 # Run isort (import sorter)
 isort data tests
 
-```
-
 ## Project Structure
 
 ```
@@ -132,6 +130,26 @@ isort data tests
 See [references/data_dictionary.md](references/data_dictionary.md) for a detailed description of the data fields.
 
 ## Contributing
+
+### Notebook Naming Convention
+
+This project borrows from https://cookiecutter-data-science.drivendata.org/using-the-template/ a consistent naming pattern for Jupyter notebooks to maintain organization and clarity:
+
+```
+<PHASE>.<SEQUENCE>-<INITIALS>-<DESCRIPTION>.ipynb
+```
+
+- **PHASE**: Number indicating the development phase
+  - `0` - Data exploration - often just for exploratory work
+  - `1` - Data cleaning and feature creation - often writes data to data/processed or data/interim
+  - `2` - Visualizations - often writes publication-ready viz to reports
+  - `3` - Modeling - training machine learning models
+  - `4` - Publication/Reporting - Notebooks that get turned directly into reports
+- **SEQUENCE**: Two-digit number for ordering notebooks within the same phase
+- **INITIALS**: Your initials (lowercase)
+- **DESCRIPTION**: Short hyphen-separated description of the notebook's purpose
+
+Example: `0.01-pjb-data-source-1.ipynb`
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
