@@ -248,7 +248,8 @@ def records_to_dataframe(records):
         records: A list of dictionaries where each dictionary represents a row of data
 
     Returns:
-        A DataFrame containing the records with proper data types
+        A DataFrame containing the records with proper data types. Returns an empty
+        DataFrame with no columns if the input list is empty.
 
     Example:
         >>> records = [{"Seat": "1", "Court": "9th Circuit"}]
@@ -258,15 +259,17 @@ def records_to_dataframe(records):
     import pandas as pd
 
     if not records:
-        return pd.DataFrame(columns=["Seat", "Court"])
+        return pd.DataFrame()  # Return empty DataFrame with no columns
 
     try:
         # Create DataFrame from records
         df = pd.DataFrame(records)
 
-        # Ensure required columns exist
-        if "Seat" not in df.columns or "Court" not in df.columns:
-            raise ValueError("Input records must contain 'Seat' and 'Court' columns")
+        # Check for required columns
+        required_columns = {"Seat", "Court"}
+        if not required_columns.issubset(df.columns):
+            logger.warning(f"Missing required columns. Expected at least: {required_columns}")
+            return pd.DataFrame()
 
         # Convert Seat to numeric if possible
         df["Seat"] = pd.to_numeric(df["Seat"], errors="coerce")
@@ -280,9 +283,10 @@ def records_to_dataframe(records):
         return df
 
     except Exception as e:
-        print(f"Error converting records to DataFrame: {e}")
-        # Return an empty DataFrame with the expected columns
-        return pd.DataFrame(columns=["Seat", "Court"])
+        error_msg = f"Error converting records to DataFrame: {e}"
+        logger.error(error_msg)
+        # Return an empty DataFrame with no columns on error
+        return pd.DataFrame()
 
 
 def save_to_csv(df: pd.DataFrame, path: Union[str, Path]) -> None:
@@ -301,7 +305,31 @@ def save_to_csv(df: pd.DataFrame, path: Union[str, Path]) -> None:
         >>> df = pd.DataFrame({"A": [1, 2], "B": [3, 4]})
         >>> save_to_csv(df, "output.csv")
     """
-    df.to_csv(path, index=False)
+    if not isinstance(df, pd.DataFrame):
+        error_msg = f"Expected pandas DataFrame, got {type(df).__name__}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    try:
+        # Convert to Path object if it's a string
+        path = Path(path) if isinstance(path, str) else path
+        
+        # Create parent directories if they don't exist
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            error_msg = f"Failed to create directory {path.parent}: {e}"
+            logger.error(error_msg)
+            raise IOError(str(e)) from e
+            
+        # Save the DataFrame to CSV
+        df.to_csv(path, index=False)
+        logger.info(f"Successfully saved data to {path}")
+        
+    except Exception as e:
+        error_msg = f"Error saving DataFrame to {path}: {e}"
+        logger.error(error_msg)
+        raise IOError(str(e)) from e
 
 
 def main() -> None:
