@@ -22,13 +22,6 @@ def example_page_content(example_page_path):
     return example_page_path.read_text()
 
 @pytest.fixture
-def sample_html_file(tmp_path):
-    """Create a temporary HTML file with sample data."""
-    file_path = tmp_path / "test.html"
-    file_path.write_text(example_page_content())
-    return file_path
-
-@pytest.fixture
 def sample_dataframe():
     """Create a sample DataFrame for testing."""
     return pd.DataFrame({
