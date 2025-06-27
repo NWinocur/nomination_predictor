@@ -16,17 +16,18 @@ For more information about the data source, visit:
 https://www.uscourts.gov/data-news/judicial-vacancies/archive-judicial-vacancies
 """
 
+from datetime import datetime
 import logging
 import os
-import sys
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Any
+import sys
+import time
+from typing import Any, Dict, List, Optional, Union
 
+from bs4 import BeautifulSoup
+from dotenv import find_dotenv, load_dotenv
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv, find_dotenv
 
 # find .env automagically by walking up directories until it's found
 dotenv_path = find_dotenv()
@@ -76,21 +77,7 @@ def validate_url(url: str) -> bool:
 
 
 def generate_or_fetch_archive_urls() -> List[str]:
-    """
-    Fetch and parse the US Courts archive page to extract relevant URLs.
-
-    This function scrapes the main archive page to find URLs containing
-    judicial vacancy data for different years and categories.
-
-    Returns:
-        List[str]: A list of absolute URLs to pages containing judicial vacancy data
-
-    Example:
-        >>> urls = generate_or_fetch_archive_urls()
-        >>> print(f"Found {len(urls)} archive URLs")
-    """
-
-    # This is the main archive page URL - it will be mocked in tests
+    """Fetch and parse the US Courts archive page to extract relevant URLs."""
     archive_url = (
         "https://www.uscourts.gov/data-news/judicial-vacancies/archive-judicial-vacancies"
     )
@@ -103,11 +90,12 @@ def generate_or_fetch_archive_urls() -> List[str]:
         soup = BeautifulSoup(response.text, "html.parser")
         urls = []
 
-        # Example: Find all links containing 'vacancies' and '2025'
+        # Look for links containing any year and our target patterns
         for link in soup.find_all("a", href=True):
             url = link["href"]
-            if "2025" in url and any(
-                x in url for x in ["vacancies", "emergencies", "confirmations"]
+            # Match any 4-digit year and our target patterns
+            if any(x in url for x in ["vacancies", "emergencies", "confirmations"]) and any(
+                str(year) in url for year in range(1981, datetime.now().year + 1)
             ):
                 if not url.startswith("http"):
                     url = f"https://www.uscourts.gov{url if not url.startswith('/') else url}"
@@ -115,9 +103,10 @@ def generate_or_fetch_archive_urls() -> List[str]:
 
         if not urls:
             logger.warning("No valid URLs found on the archive page")
+            raise FetchError("No valid URLs found on the archive page")
 
         logger.info(f"Found {len(urls)} archive URLs")
-        return urls
+        return list(dict.fromkeys(urls))  # Remove duplicates while preserving order
 
     except requests.RequestException as e:
         error_msg = f"Error fetching archive page: {e}"
@@ -137,22 +126,29 @@ def fetch_html(url: str) -> str:
         raise ValueError(error_msg)
 
     max_retries = 3
+    last_exception = None
+
     for attempt in range(max_retries):
         try:
             logger.debug(f"Fetching URL (attempt {attempt + 1}): {url}")
             response = requests.get(url, timeout=30)
-            response.raise_for_status()
+            response.raise_for_status()  # This will raise HTTPError for 4XX/5XX responses
             return response.text
 
         except requests.RequestException as e:
-            if attempt == max_retries - 1:
-                error_msg = f"Failed to fetch {url} after {max_retries} attempts: {e}"
-                logger.error(error_msg)
-                raise FetchError(error_msg) from e
-            logger.warning(f"Attempt {attempt + 1} failed, retrying...")
+            last_exception = e
+            if attempt < max_retries - 1:  # Don't log on the last attempt
+                retry_delay = (2**attempt) * 0.1  # Exponential backoff
+                logger.warning(
+                    f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay:.1f}s..."
+                )
+                time.sleep(retry_delay)
+            continue
 
-    # This should never be reached due to the raise in the loop
-    raise FetchError("Unexpected error in fetch_html")
+    # If we've exhausted all retries
+    error_msg = f"Failed to fetch {url} after {max_retries} attempts: {str(last_exception)}"
+    logger.error(error_msg)
+    raise FetchError(error_msg) from last_exception
 
 
 def extract_vacancy_table(html: str) -> List[Dict[str, str]]:
@@ -208,22 +204,22 @@ def extract_vacancy_table(html: str) -> List[Dict[str, str]]:
         # Extract data rows
         records = []
         rows = table.find_all("tr")
-        
+
         # Determine which rows to process
         start_idx = 1 if skip_first_row and len(rows) > 1 else 0
-        
+
         for row in rows[start_idx:]:
             cells = row.find_all(["td", "th"])
             if not cells:
                 continue
-                
+
             # Create record with normalized field names
             record = {}
             for i, cell in enumerate(cells):
                 if i < len(normalized_headers):
                     field_name = normalized_headers[i]
                     record[field_name] = cell.get_text(strip=True)
-            
+
             # Only add record if it has data
             if record:
                 records.append(record)
