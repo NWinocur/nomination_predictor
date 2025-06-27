@@ -120,13 +120,25 @@ def test_fetch_html_retry(mock_get):
 
 def test_extract_vacancy_table(example_page_content):
     """Test table extraction from HTML."""
+    # Act
     records = make_dataset.extract_vacancy_table(example_page_content)
     
-    assert len(records) == 2
-    assert records[0]["court"] == "9th Circuit"
-    assert records[0]["vacancy_date"] == "01/15/2025"
-    assert records[1]["court"] == "DC Circuit"
-    assert records[1]["vacancy_date"] == "02/20/2025"
+    # Assert
+    assert len(records) == 2, "Should extract exactly 2 records"
+    
+    # Verify first record
+    first = next(r for r in records if r["court"] == "9th Circuit")
+    assert first["vacancy_date"] == "01/15/2025"
+    assert first["nominating_president"] == "Biden"
+    assert first["nominee"] == "John Smith"
+    assert first["status"] == "Pending Hearing"
+    
+    # Verify second record
+    second = next(r for r in records if r["court"] == "DC Circuit")
+    assert second["vacancy_date"] == "02/20/2025"
+    assert second["nominating_president"] == "Biden"
+    assert second["nominee"] == "Jane Doe"
+    assert second["status"] == "Pending Committee Vote"
 
 def test_extract_vacancy_table_complete_data(example_page_content):
     """Test extraction with all possible fields"""

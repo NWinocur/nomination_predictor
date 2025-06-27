@@ -178,7 +178,7 @@ def extract_vacancy_table(html: str) -> List[Dict[str, str]]:
             logger.warning("No table found in HTML content")
             return []
 
-        # Extract headers
+        # Extract and normalize headers from thead if it exists
         headers = []
         thead = table.find("thead")
         if thead:
@@ -186,43 +186,50 @@ def extract_vacancy_table(html: str) -> List[Dict[str, str]]:
             if header_row:
                 headers = [th.get_text(strip=True) for th in header_row.find_all(["th", "td"])]
 
-        # If no headers in thead, try to get from first row
+        # If no headers in thead, try to get from first row in tbody
         if not headers:
-            first_row = table.find("tr")
+            first_row = table.find("tr")  # Look for first row in table
             if first_row:
                 headers = [th.get_text(strip=True) for th in first_row.find_all(["th", "td"])]
-                skip_first_row = True
-            else:
-                headers = []
-                skip_first_row = False
-        else:
-            skip_first_row = False
+
+        if not headers:
+            logger.warning("No headers found in table")
+            return []
 
         # Normalize header names (lowercase, replace spaces with underscores)
         normalized_headers = [h.lower().replace(" ", "_") for h in headers]
+        logger.debug(f"Found headers: {normalized_headers}")
 
-        # Extract data rows
+        # Extract data rows from tbody, or from table if no tbody
+        tbody = table.find("tbody")
+        rows = tbody.find_all("tr") if tbody else table.find_all("tr")
+        
+        # If we found headers in thead, we can use all rows in tbody
+        # Otherwise, skip the first row since it was used for headers
+        start_idx = 0 if thead else 1
+        
+        logger.debug(f"Found {len(rows)} total rows (starting from index {start_idx})")
+
         records = []
-        rows = table.find_all("tr")
-
-        # Determine which rows to process
-        start_idx = 1 if skip_first_row and len(rows) > 1 else 0
-
-        for row in rows[start_idx:]:
+        for i, row in enumerate(rows[start_idx:], start=start_idx):
             cells = row.find_all(["td", "th"])
             if not cells:
                 continue
 
-            # Create record with normalized field names
-            record = {}
-            for i, cell in enumerate(cells):
-                if i < len(normalized_headers):
-                    field_name = normalized_headers[i]
+            # Only process rows with the expected number of cells
+            if len(cells) == len(normalized_headers):
+                record = {}
+                for j, cell in enumerate(cells):
+                    field_name = normalized_headers[j]
                     record[field_name] = cell.get_text(strip=True)
-
-            # Only add record if it has data
-            if record:
-                records.append(record)
+                if record:  # Only add non-empty records
+                    records.append(record)
+                    logger.debug(f"Added record: {record}")
+            else:
+                logger.warning(
+                    f"Skipping row with {len(cells)} cells (expected {len(normalized_headers)}): "
+                    f"{[cell.get_text(strip=True) for cell in cells]}"
+                )
 
         logger.info(f"Extracted {len(records)} records from HTML table")
         return records
