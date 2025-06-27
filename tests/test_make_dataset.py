@@ -1,17 +1,16 @@
 """Tests for the make_dataset module."""
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-import re
 import os
+from pathlib import Path
+import re
 import time
-import pandas as pd
-import pytest
-import requests
-
+from unittest.mock import MagicMock, patch
 
 # Import the module to test
 from data import make_dataset
+import pandas as pd
+import pytest
+import requests
 
 
 # Fixtures

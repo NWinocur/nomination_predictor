@@ -72,6 +72,7 @@ This project does the following:
 Some of this project's test cases uses locally-downloaded copies of real HTML pages from [uscourts.gov](https://www.uscourts.gov/data-news/judicial-vacancies/archive-judicial-vacancies) as test fixtures to validate data-scraping behavior.
 
 ### 🧪 Fixture Location
+
 Fixture files are saved in:
 
 ```
@@ -81,6 +82,7 @@ tests/fixtures/pages
 These are used by the test suite for deterministic, offline testing.
 
 ### 🚫 Not Version Controlled
+
 Due to their size (~371MB total), these files are **not committed to Git**. If cloning the repository fresh and wanting to run tests, you’ll need to regenerate them.
 
 ### 📥 Regenerate Fixtures
@@ -92,15 +94,6 @@ python tests/fixtures/download_fixture_pages.py
 ```
 
 This will populate tests/fixtures/pages/ with HTML documents across the full range of years.
-
-# Run flake8
-flake8 data tests
-
-# Run black (code formatter)
-black data tests
-
-# Run isort (import sorter)
-isort data tests
 
 ## Project Structure
 
@@ -131,9 +124,13 @@ See [references/data_dictionary.md](references/data_dictionary.md) for a detaile
 
 ## Contributing
 
+### Code formatting and type checking
+
+This project uses Ruff and MyPy for code formatting and type checking.
+
 ### Notebook Naming Convention
 
-This project borrows from https://cookiecutter-data-science.drivendata.org/using-the-template/ a consistent naming pattern for Jupyter notebooks to maintain organization and clarity:
+This project borrows from <https://cookiecutter-data-science.drivendata.org/using-the-template/> a consistent naming pattern for Jupyter notebooks to maintain organization and clarity:
 
 ```
 <PHASE>.<SEQUENCE>-<INITIALS>-<DESCRIPTION>.ipynb
