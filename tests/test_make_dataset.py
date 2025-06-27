@@ -1,14 +1,18 @@
 """Tests for the make_dataset module."""
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-# Import the module to test
-from data import make_dataset
+import re
+import os
+import time
 import pandas as pd
 import pytest
 import requests
+
+
+# Import the module to test
+from data import make_dataset
+
 
 # Fixtures
 @pytest.fixture
@@ -112,76 +116,262 @@ def test_fetch_html_retry(mock_get):
     assert mock_get.call_count == 3
 
 def test_extract_vacancy_table(example_page_content):
-    """Test table extraction from HTML."""
+    """Test table extraction from HTML with comprehensive assertions."""
     # Act
     records = make_dataset.extract_vacancy_table(example_page_content)
     
-    # Assert
+    # Assert basic structure
+    assert isinstance(records, list), "Should return a list of records"
     assert len(records) == 2, "Should extract exactly 2 records"
     
-    # Verify first record
-    first = next(r for r in records if r["court"] == "9th Circuit")
-    assert first["vacancy_date"] == "01/15/2025"
-    assert first["nominating_president"] == "Biden"
-    assert first["nominee"] == "John Smith"
-    assert first["status"] == "Pending Hearing"
-    
-    # Verify second record
-    second = next(r for r in records if r["court"] == "DC Circuit")
-    assert second["vacancy_date"] == "02/20/2025"
-    assert second["nominating_president"] == "Biden"
-    assert second["nominee"] == "Jane Doe"
-    assert second["status"] == "Pending Committee Vote"
-
-def test_extract_vacancy_table_complete_data(example_page_content):
-    """Test extraction with all possible fields"""
-    records = make_dataset.extract_vacancy_table(example_page_content)
-    
-    # Check that we have the expected fields
-    expected_fields = {
-        'court', 'vacancy_date', 'nominating_president', 
-        'nominee', 'status'
-    }
-    assert all(set(record.keys()) == expected_fields for record in records)
-    
-    # Check that we have non-empty values for required fields
-    for record in records:
-        assert record['court']
-        assert record['vacancy_date']
-
-def test_records_to_dataframe(sample_dataframe):
-    """Test DataFrame conversion."""
-    records = [
-        {"Seat": "1", "Court": "9th Circuit", "Vacancy Date": "2025-01-15"},
-        {"Seat": "2", "Court": "DC Circuit", "Vacancy Date": "2025-02-20"}
+    # Define expected data in a more maintainable way
+    expected_records = [
+        {
+            "court": "9th Circuit",
+            "vacancy_date": "01/15/2025",
+            "nominating_president": "Biden",
+            "nominee": "John Smith",
+            "status": "Pending Hearing"
+        },
+        {
+            "court": "DC Circuit",
+            "vacancy_date": "02/20/2025",
+            "nominating_president": "Biden",
+            "nominee": "Jane Doe",
+            "status": "Pending Committee Vote"
+        }
     ]
     
-    df = make_dataset.records_to_dataframe(records)
+    # Verify each record
+    for expected in expected_records:
+        # Find matching record by court (unique identifier)
+        actual = next((r for r in records if r["court"] == expected["court"]), None)
+        assert actual is not None, f"Expected record for {expected['court']} not found"
+        
+        # Verify all fields match
+        for field, expected_value in expected.items():
+            assert field in actual, f"Field '{field}' missing from record"
+            assert actual[field] == expected_value, f"Mismatch in {field} for {expected['court']}"
     
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) == 2
-    assert set(df.columns) == {"Seat", "Court", "Vacancy Date"}
-    assert df["Seat"].dtype == "int64"
+    # Verify no extra fields in actual records
+    for record in records:
+        expected_fields = set(expected_records[0].keys())
+        actual_fields = set(record.keys())
+        assert actual_fields == expected_fields, f"Unexpected fields in record for {record['court']}"
+
+def test_extract_vacancy_table_complete_data(example_page_content):
+    """Test extraction with all possible fields and their properties."""
+    # Act
+    records = make_dataset.extract_vacancy_table(example_page_content)
+    
+    # Assert basic structure
+    assert isinstance(records, list), "Should return a list of records"
+    assert len(records) > 0, "Should return at least one record"
+    
+    # Define expected fields and their validation functions
+    field_validations = {
+        'court': {
+            'required': True,
+            'type': str,
+            'validator': lambda x: len(x.strip()) > 0,
+            'error': 'Court name should be a non-empty string'
+        },
+        'vacancy_date': {
+            'required': True,
+            'type': str,
+            'validator': lambda x: bool(re.match(r'\d{1,2}/\d{1,2}/\d{4}', x)),
+            'error': 'Vacancy date should be in MM/DD/YYYY format'
+        },
+        'nominating_president': {
+            'required': True,
+            'type': str,
+            'validator': lambda x: len(x.strip()) > 0,
+            'error': 'Nominating president should be a non-empty string'
+        },
+        'nominee': {
+            'required': True,
+            'type': str,
+            'validator': lambda x: len(x.strip()) > 0,
+            'error': 'Nominee name should be a non-empty string'
+        },
+        'status': {
+            'required': True,
+            'type': str,
+            'validator': lambda x: len(x.strip()) > 0,
+            'error': 'Status should be a non-empty string'
+        }
+    }
+    
+    # Check each record
+    for i, record in enumerate(records, 1):
+        # Check that all expected fields are present
+        record_fields = set(record.keys())
+        expected_fields = set(field_validations.keys())
+        assert record_fields == expected_fields, \
+            f"Record {i} has unexpected fields. " \
+            f"Expected: {sorted(expected_fields)}, Got: {sorted(record_fields)}"
+        
+        # Validate each field
+        for field, validation in field_validations.items():
+            value = record[field]
+            
+            # Check field exists (should be true from above, but being defensive)
+            assert field in record, f"Field '{field}' missing from record {i}"
+            
+            # Check type
+            assert isinstance(value, validation['type']), \
+                f"Field '{field}' should be {validation['type'].__name__}, got {type(value).__name__}"
+            
+            # Skip validation for None if field is not required
+            if value is None and not validation['required']:
+                continue
+                
+            # Run field-specific validation
+            assert validation['validator'](value), f"{validation['error']} in record {i}: {value}"
+
+def test_records_to_dataframe():
+    """Test DataFrame conversion with comprehensive validation."""
+    # Arrange
+    test_records = [
+        {
+            "Seat": "1",
+            "Court": "9th Circuit",
+            "Vacancy Date": "2025-01-15",
+            "Nominating President": "Biden",
+            "Nominee": "John Smith",
+            "Status": "Pending"
+        },
+        {
+            "Seat": "2",
+            "Court": "DC Circuit",
+            "Vacancy Date": "2025-02-20",
+            "Nominating President": "Biden",
+            "Nominee": "Jane Doe",
+            "Status": "Pending"
+        }
+    ]
+    
+    # Act
+    df = make_dataset.records_to_dataframe(test_records)
+    
+    # Assert
+    # Check DataFrame structure
+    assert isinstance(df, pd.DataFrame), "Should return a pandas DataFrame"
+    assert len(df) == 2, "Should have 2 rows of data"
+    
+    # Check column names and types
+    expected_columns = {
+        'Seat': 'int64',
+        'Court': 'object',
+        'Vacancy Date': 'object',
+        'Nominating President': 'object',
+        'Nominee': 'object',
+        'Status': 'object'
+    }
+    
+    # Verify all expected columns exist
+    assert set(df.columns) == set(expected_columns.keys()), \
+        f"Unexpected columns. Expected: {set(expected_columns.keys())}, Got: {set(df.columns)}"
+    
+    # Verify column data types
+    for col, expected_dtype in expected_columns.items():
+        assert str(df[col].dtype) == expected_dtype, \
+            f"Column '{col}' should be {expected_dtype}, got {df[col].dtype}"
+    
+    # Verify data integrity
+    for i, record in enumerate(test_records):
+        for col, expected_value in record.items():
+            if col == 'Seat':
+                # Seat should be converted to int
+                assert df.iloc[i][col] == int(expected_value), \
+                    f"Seat value mismatch in row {i}"
+            else:
+                assert df.iloc[i][col] == expected_value, \
+                    f"Value mismatch for {col} in row {i}"
 
 def test_records_to_dataframe_empty():
     """Test DataFrame conversion with empty records."""
+    # Act
     df = make_dataset.records_to_dataframe([])
-    assert df.empty
-    assert set(df.columns) == set()
+    
+    # Assert
+    assert isinstance(df, pd.DataFrame), "Should return a pandas DataFrame"
+    assert df.empty, "DataFrame should be empty"
+    assert len(df.columns) == 0, "Empty DataFrame should have no columns"
+    assert df.index.empty, "Empty DataFrame should have no index"
+    assert df.shape == (0, 0), "Empty DataFrame should have shape (0, 0)"
+    assert df.dtypes.empty, "Empty DataFrame should have no dtypes"
 
-def test_save_to_csv(sample_dataframe, tmp_path):
-    """Test saving DataFrame to CSV."""
-    output_file = tmp_path / "output.csv"
+def test_save_to_csv(tmp_path):
+    """Test saving DataFrame to CSV with comprehensive validation."""
+    # Arrange
+    test_data = [
+        {
+            "Seat": 1,
+            "Court": "9th Circuit",
+            "Vacancy Date": "2025-01-15",
+            "Nominating President": "Biden",
+            "Nominee": "John Smith",
+            "Status": "Pending"
+        },
+        {
+            "Seat": 2,
+            "Court": "DC Circuit",
+            "Vacancy Date": "2025-02-20",
+            "Nominating President": "Biden",
+            "Nominee": "Jane Doe",
+            "Status": "Pending"
+        }
+    ]
+    test_df = pd.DataFrame(test_data)
+    output_file = tmp_path / "test_output" / "judicial_vacancies.csv"
     
-    # Test saving
-    make_dataset.save_to_csv(sample_dataframe, output_file)
+    # Ensure the output directory doesn't exist yet
+    assert not output_file.parent.exists(), "Test directory should not exist before test"
     
-    # Verify file was created
-    assert output_file.exists()
+    # Act
+    make_dataset.save_to_csv(test_df, output_file)
     
-    # Verify content
+    # Assert
+    # Check file was created
+    assert output_file.exists(), "Output file was not created"
+    assert output_file.stat().st_size > 0, "Output file is empty"
+    
+    # Verify file content
     df_read = pd.read_csv(output_file)
-    pd.testing.assert_frame_equal(df_read, sample_dataframe)
+    
+    # Check basic DataFrame structure
+    assert isinstance(df_read, pd.DataFrame), "Should read back a pandas DataFrame"
+    assert len(df_read) == len(test_df), "Number of rows should match"
+    assert set(df_read.columns) == set(test_df.columns), "Column names should match"
+    
+    # Verify data integrity
+    for col in test_df.columns:
+        if col == 'Seat':
+            # Check numeric columns with potential type conversion
+            pd.testing.assert_series_equal(
+                df_read[col], 
+                test_df[col].astype(df_read[col].dtype),
+                check_names=False,
+                check_dtype=False
+            )
+        else:
+            # Check string/object columns
+            pd.testing.assert_series_equal(
+                df_read[col], 
+                test_df[col],
+                check_names=False
+            )
+    
+    # Verify file permissions (readable and writable by current user)
+    assert os.access(output_file, os.R_OK), "Output file should be readable"
+    assert os.access(output_file, os.W_OK), "Output file should be writable"
+    
+    # Test that existing file is overwritten
+    original_mtime = output_file.stat().st_mtime
+    time.sleep(1)  # Ensure modification time changes
+    make_dataset.save_to_csv(test_df, output_file)
+    assert output_file.stat().st_mtime > original_mtime, "File should be overwritten"
 
 @patch('data.make_dataset.Path')
 def test_save_to_csv_error(mock_path, sample_dataframe):
