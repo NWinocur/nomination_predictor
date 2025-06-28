@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 import requests
+from datetime import datetime
 
 # Import the module to test
 from nomination_predictor.dataset import (
@@ -216,10 +217,50 @@ def test_save_to_csv_error(mock_to_csv):
     assert "Failed to save CSV" in str(excinfo.value)
 
 def test_generate_or_fetch_archive_urls():
-    """Test URL generation for archive pages."""
-    # This is a simple test - in practice, you might want to mock the web request
-    # or use a fixture with a saved response
+    """
+    Test URL generation for archive pages.
+    
+    Verifies that:
+    1. Returns a list of strings
+    2. All URLs are valid HTTP/HTTPS URLs with the correct format
+    3. Covers years from 1981 to current year (inclusive)
+    4. Uses the correct query parameter format: ?year=YYYY
+    """
+    # Get the current year
+    current_year = datetime.now().year
+    
+    # Generate the URLs
     urls = generate_or_fetch_archive_urls()
+    
+    # Basic type and format checks
     assert isinstance(urls, list)
     assert all(isinstance(url, str) for url in urls)
-    assert all(url.startswith('http') for url in urls)
+    assert all(url.startswith(('http://', 'https://')) for url in urls)
+    
+    # Check year range (1981 to current year, inclusive)
+    years = []
+    for url in urls:
+        # Extract the year from the URL query parameter
+        try:
+            from urllib.parse import urlparse, parse_qs
+            parsed_url = urlparse(url)
+            year = int(parse_qs(parsed_url.query).get('year', [''])[0])
+            years.append(year)
+            
+            # Verify the URL format
+            assert parsed_url.path.endswith('/archive-judicial-vacancies'), \
+                f"URL path should end with '/archive-judicial-vacancies'"
+            assert 'year=' in parsed_url.query, "URL should contain 'year' query parameter"
+            
+        except (ValueError, IndexError, AssertionError) as e:
+            pytest.fail(f"Invalid URL format: {url}. Error: {e}")
+    
+    # Should include all years from 1981 to current year
+    expected_years = list(range(1981, current_year + 1))
+    assert sorted(years) == expected_years, \
+        f"Expected years {expected_years[0]}-{expected_years[-1]}, got {min(years)}-{max(years)}"
+    
+    # Verify URL format for a sample year
+    sample_year = 2020
+    assert any(f"year={sample_year}" in url for url in urls), \
+        f"Expected to find URL with '?year={sample_year}'"
