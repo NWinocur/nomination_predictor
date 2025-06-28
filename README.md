@@ -95,6 +95,24 @@ python tests/fixtures/download_fixture_pages.py
 
 This will populate tests/fixtures/pages/ with HTML documents across the full range of years.
 
+### Running tests
+
+make test
+
+## Set up Python environment
+
+make create_environment
+make requirements
+
+## Run ruff (code formatter) for linting or reformatting
+
+make lint
+make format
+
+## Retrieving data
+
+make data
+
 ## Project Structure
 
 ```
@@ -123,10 +141,6 @@ This will populate tests/fixtures/pages/ with HTML documents across the full ran
 See [references/data_dictionary.md](references/data_dictionary.md) for a detailed description of the data fields.
 
 ## Contributing
-
-### Code formatting and type checking
-
-This project uses Ruff and MyPy for code formatting and type checking.
 
 ### Notebook Naming Convention
 

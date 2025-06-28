@@ -37,7 +37,16 @@ dependencies = [
     "beautifulsoup4",
 ]
 requires-python = "==3.13.5"
-
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "isort",
+    "mypy",
+    "jupyter",
+    "ipykernel",
+]
 
 [tool.ruff]
 line-length = 99
@@ -51,3 +60,5 @@ extend-select = ["I"]  # Add import sorting
 known-first-party = ["nomination_predictor"]
 force-sort-within-sections = true
 
+[tool.flit.module]
+name = "nomination_predictor"

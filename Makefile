@@ -16,7 +16,10 @@ PYTHON_INTERPRETER = python3.13
 requirements:
 	pip install -e .
 	
-
+## Install the package in development mode
+.PHONY: install
+install:  
+	pip install -e ".[dev]"
 
 
 ## Delete all compiled Python files
