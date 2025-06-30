@@ -219,6 +219,48 @@ def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
         raise ParseError(f"Failed to parse HTML table: {e}")
 
 
+def extract_month_links(html: str, base_url: str = "https://www.uscourts.gov") -> List[Dict[str, str]]:
+    """
+    Extract month-level links from a year page.
+    
+    Args:
+        html: HTML content of the year page
+        base_url: Base URL to resolve relative links (default: uscourts.gov)
+        
+    Returns:
+        List of dictionaries with 'url' and 'month' keys
+    """
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        month_links = []
+        
+        # Find all links that match the pattern for monthly reports
+        for link in soup.find_all('a', href=True):
+            href = link['href']
+            text = link.get_text(strip=True).lower()
+            
+            # Look for links that match the pattern for monthly reports
+            if '/judicial-vacancies/' in href and any(month in text for month in [
+                'january', 'february', 'march', 'april', 'may', 'june',
+                'july', 'august', 'september', 'october', 'november', 'december'
+            ]):
+                # Resolve relative URLs
+                if not href.startswith(('http://', 'https://')):
+                    href = f"{base_url.rstrip('/')}/{href.lstrip('/')}"
+                
+                month_links.append({
+                    'url': href,
+                    'month': text,
+                    'year': None  # Will be set by the caller
+                })
+        
+        return month_links
+        
+    except Exception as e:
+        logger.error(f"Error extracting month links: {e}")
+        raise ParseError(f"Failed to extract month links: {e}")
+
+
 def records_to_dataframe(records: List[Dict[str, Any]]) -> pd.DataFrame:
     """
     Convert a list of records to a pandas DataFrame.
