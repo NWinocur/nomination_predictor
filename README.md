@@ -168,6 +168,10 @@ Example: `0.01-pjb-data-source-1.ipynb`
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
+## Future improvement opportunities
+
+- Include handling of future vacancies.  It is plausible that a vacancy which has been announced in advance (e.g. a retirement) could be filled more quickly than one which occurred due to a sudden vacancy (e.g. a death).  Handling the "future vacancy list" properly would require deciding how to handle vacancies whose vacancy date is "TBD" (there are multiple such instances on [Future Judicial Vacancies for December 2018](https://www.uscourts.gov/judges-judgeships/judicial-vacancies/future-judicial-vacancies-december-2018)), and because the one thing all other vacancies have is a date on which they occurred, this is a non-trivial question.
+
 ## Acknowledgments
 
 - Data source: [US Courts - Judicial Vacancies](https://www.uscourts.gov/judges-judgeships/judicial-vacancies)

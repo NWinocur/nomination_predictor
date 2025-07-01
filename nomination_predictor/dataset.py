@@ -155,15 +155,17 @@ def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
     Extract judicial vacancy data from HTML content.
 
     Args:
-        html: HTML content containing a table
+        html: HTML content containing a table with judicial vacancy data
 
     Returns:
         List of dictionaries containing extracted data with standardized fields:
-        - court: Name of the court (required)
+        - court: Name of the court/district (required)
         - vacancy_date: Date the vacancy occurred (required)
-        - status: Status of the vacancy (required)
-        - nominating_president: Name of the president who made the nomination (optional)
-        - nominee: Name of the nominee (optional, extracted from status if available)
+        - incumbent: Name of the outgoing judge (required)
+        - vacancy_reason: Reason for the vacancy (required)
+        - nominee: Name of the nominee (if any)
+        - nomination_date: Date of nomination (if any)
+        - confirmation_date: Date of confirmation (if any)
     """
     try:
         soup = BeautifulSoup(html, "html.parser")
@@ -179,6 +181,17 @@ def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
                 th.get_text(strip=True).lower().replace(" ", "_")
                 for th in header_row.find_all(["th", "td"])
             ]
+        else:
+            # If no header row, use default column names based on position
+            headers = [
+                "court", 
+                "vacancy_date", 
+                "incumbent", 
+                "vacancy_reason", 
+                "nominee", 
+                "nomination_date", 
+                "confirmation_date"
+            ]
 
         rows = []
         # Skip header row if it exists
@@ -187,31 +200,18 @@ def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
             if not cells:  # Skip empty rows
                 continue
 
-            # Create record with all fields initialized to None
-            record = {
-                'court': None,
-                'vacancy_date': None,
-                'status': None,
-                'nominating_president': None,
-                'nominee': None,
-            }
-
-
-            # Update with actual data from the row
+            # Create record with fields from the row
+            record = {}
             for i, value in enumerate(cells):
                 if i < len(headers):
                     field_name = headers[i]
-                    # Only update if the field is one we care about
-                    if field_name in record:
-                        record[field_name] = value if value else None
+                    # Only include non-empty values
+                    if value and value.strip():
+                        record[field_name] = value.strip()
 
-            # Special handling for nominee field if it's in the status
-            if record.get('status') and 'nominated:' in record['status'].lower():
-                parts = record['status'].split('Nominated:', 1)
-                if len(parts) > 1:
-                    record['nominee'] = parts[1].strip()
-
-            rows.append(record)
+            # Only add the record if it has required fields
+            if all(field in record for field in ["court", "vacancy_date"]):
+                rows.append(record)
 
         return rows
 
