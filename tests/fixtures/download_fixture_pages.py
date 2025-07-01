@@ -8,9 +8,11 @@ ARCHIVE_BASE_URL = BASE_DOMAIN + "/data-news/judicial-vacancies/archive-judicial
 
 os.makedirs(FIXTURE_DIR, exist_ok=True)
 
-def save_file(path, content):
+def save_file(path, content, binary=False):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    mode = 'wb' if binary else 'w'
+    encoding = None if binary else 'utf-8'
+    with open(path, mode, encoding=encoding) as f:
         f.write(content)
 
 def download_year_index(year):
@@ -41,12 +43,20 @@ def download_child_pages(year, html):
             print(f"    ✖ Skipping malformed link: {href}")
             continue
 
-        local_path = os.path.join(FIXTURE_DIR, y, m, f"{report}.html")
         try:
             print(f"    ↓ {report} for {y}-{m}")
-            r = requests.get(full_url, timeout=10)
+            r = requests.get(full_url, timeout=10, allow_redirects=True)
             r.raise_for_status()
-            save_file(local_path, r.text)
+            
+            # Determine file extension based on content type
+            content_type = r.headers.get('content-type', '').lower()
+            is_pdf = 'pdf' in content_type
+            extension = 'pdf' if is_pdf else 'html'
+            
+            # Save file with appropriate extension and content
+            local_path = os.path.join(FIXTURE_DIR, y, m, f"{report}.{extension}")
+            save_file(local_path, r.content if is_pdf else r.text, binary=is_pdf)
+            
         except Exception as e:
             print(f"    ✖ Failed to fetch {full_url}: {e}")
 
