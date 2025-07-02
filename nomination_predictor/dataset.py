@@ -152,7 +152,7 @@ def fetch_html(url: str, max_retries: int = 3, retry_delay: float = 1.0, timeout
 
 def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
     """
-    Extract judicial vacancy data from HTML content.
+    Extract judicial vacancy data from month-level HTML content.
 
     Args:
         html: HTML content containing a table with judicial vacancy data

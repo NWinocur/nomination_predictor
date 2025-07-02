@@ -1,4 +1,12 @@
-"""Tests for handling HTML structure variations in judicial vacancy data."""
+"""Tests for handling HTML structure variations in judicial vacancy data.
+
+This test suite verifies the extraction of vacancy data from different page types:
+1. Year-level pages (e.g., archive_1983.html, archive_2025.html) - Contain links to monthly reports
+2. Month-level pages (e.g., 2001/01/vacancies.html) - Contain detailed vacancy information
+3. PDF documents (e.g., 1983/01/vacancies.pdf) - Currently unsupported format
+
+Each test is clearly labeled to indicate the input type and expected behavior.
+"""
 
 from datetime import datetime
 from pathlib import Path
@@ -7,71 +15,89 @@ from typing import Dict
 import pytest
 
 # Import the module to test
-from nomination_predictor.dataset import ParseError, extract_vacancy_table
+from nomination_predictor.dataset import ParseError, extract_month_links, extract_vacancy_table
 
 # Path to fixtures
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pages"
 
 # Format Analysis Results
 """
-Based on analysis of the fixtures, here are the different formats found:
+Document Format Analysis:
 
-1. PDF Formats:
-   - 1981-2001/12: Older PDF format (e.g., 1983/01/vacancies.pdf)
-   - 2001/12: Newer PDF format with different layout (vacancies.pdf)
-   - TODO: add support for PDFs so that known/expected formats are processed without a raised ParseError
+A. Year-Level Pages (e.g., archive_YYYY.html):
+   - archive_1983.html: Legacy HTML format (contains month links)
+   - archive_2025.html: Modern HTML format (contains month links)
+   Expected output: List of dictionaries with 'url', 'month', and 'year' keys
 
-2. HTML Formats:
-   - archive_1983.html: Legacy HTML format (simple table)
-   - archive_2025.html: Modern HTML format (more structured with additional metadata)
-   - 2001/01/vacancies.html: Monthly report format (different structure from yearly archives)
+B. Month-Level Pages:
+   1. HTML Format (e.g., 2001/01/vacancies.html):
+      - Standardized format with detailed vacancy information
+   2. PDF Formats:
+      - 1981-2001/11: Older PDF format
+      - 2001/12: Newer PDF format with different layout
+      Note: All PDF formats are currently unsupported and should raise ParseError
 """
 
-# Fixtures for loading HTML content
+# Fixtures for loading test data
 @pytest.fixture
 def load_fixture():
-    """Load content from a fixture file."""
+    """Load content from a fixture file with proper error handling."""
     def _load_fixture(filename):
         filepath = FIXTURES_DIR / filename
         return filepath.read_text(encoding='utf-8', errors='replace')
     return _load_fixture
 
-# Fixtures for different HTML structures
+# Year-Level Page Fixtures
 @pytest.fixture
-def simple_table_html(load_fixture):
-    """A simple HTML table without any child page links."""
-    return load_fixture("archive_1983.html")  # Legacy HTML format
+def year_1983_legacy_page(load_fixture):
+    """Year-level page with legacy HTML structure (1983)."""
+    return load_fixture("archive_1983.html")
 
 @pytest.fixture
-def modern_table_with_links(load_fixture):
-    """Modern HTML structure with additional metadata."""
-    return load_fixture("archive_2025.html")  # Modern HTML format
+def year_2025_modern_page(load_fixture):
+    """Year-level page with modern HTML structure (2025)."""
+    return load_fixture("archive_2025.html")
 
+# Month-Level Page Fixtures (HTML)
 @pytest.fixture
-def missing_table_html():
-    """HTML without a table element."""
-    return "<html><body><h1>Judicial Vacancies - No Data Available</h1><p>No vacancy data is currently available.</p></body></html>"
-
-@pytest.fixture
-def monthly_vacancy_page(load_fixture):
-    """A monthly vacancy page (e.g., January 2001)."""
+def month_2001_01_page(load_fixture):
+    """Month-level HTML page (January 2001)."""
     return load_fixture("2001/01/vacancies.html")
 
+# Month-Level Page Fixtures (PDF - Unsupported)
 @pytest.fixture
-def legacy_pdf_vacancy_page():
-    """A legacy PDF vacancy page (e.g., 1983/01/vacancies.pdf)."""
+def month_1983_01_pdf():
+    """Month-level PDF page (January 1983) - Unsupported format."""
     path = FIXTURES_DIR / "1983" / "01" / "vacancies.pdf"
     return path.read_bytes()
 
 @pytest.fixture
-def dec_2001_pdf_vacancy_page():
-    """December 2001 PDF vacancy page with different format (2001/12/vacancies.pdf)."""
+def month_2001_12_pdf():
+    """Month-level PDF page (December 2001) - Newer format, still unsupported."""
     path = FIXTURES_DIR / "2001" / "12" / "vacancies.pdf"
     return path.read_bytes()
 
-# Helper functions
+# Test Utilities
+def validate_month_link(link: Dict[str, str]) -> None:
+    """Validate that a month link has the expected structure and data types."""
+    assert isinstance(link, dict), "Month link should be a dictionary"
+    assert 'url' in link, "Month link is missing 'url' field"
+    assert 'month' in link, "Month link is missing 'month' field"
+    assert isinstance(link['month'], str), "Month name should be a string"
+    assert link['month'].lower() in [
+        'january', 'february', 'march', 'april', 'may', 'june',
+        'july', 'august', 'september', 'october', 'november', 'december'
+    ], f"Invalid month name: {link['month']}"
+
 def validate_vacancy_record(record: Dict[str, str]) -> None:
-    """Validate that a vacancy record has the expected structure and data types."""
+    """Validate that a vacancy record has the expected structure and data types.
+    
+    Args:
+        record: Dictionary containing vacancy data to validate
+        
+    Raises:
+        AssertionError: If the record fails validation
+    """
     assert isinstance(record, dict), "Record should be a dictionary"
     
     # Required fields
@@ -97,63 +123,72 @@ def validate_vacancy_record(record: Dict[str, str]) -> None:
         if field in record and record[field] is not None:
             assert isinstance(record[field], field_type), f"{field} should be {field_type.__name__}"
 
-# Tests for different HTML structures
-def test_legacy_table_extraction(simple_table_html):
-    """Test extraction from legacy HTML table structure (1980s-1990s)."""
-    records = extract_vacancy_table(simple_table_html)
-    assert len(records) > 0, "Expected to find vacancy records in the legacy HTML"
+# Year-Level Page Tests
+def test_extract_month_links_from_year_1983_legacy_page(year_1983_legacy_page):
+    """Test extraction of month links from year-level page with legacy HTML structure (1983)."""
+    month_links = extract_month_links(year_1983_legacy_page)
+    
+    # Verify we got some month links
+    assert len(month_links) > 0, "Expected to find month links in the 1983 year page"
+    
+    # Validate each month link
+    for link in month_links:
+        validate_month_link(link)
+        
+    # Check that we have expected months (at least some of them)
+    month_names = {link['month'].lower() for link in month_links}
+    assert any(month in month_names for month in ['january', 'february', 'march']), \
+        "Expected to find at least some common months in the links"
+
+def test_extract_month_links_from_year_2025_modern_page(year_2025_modern_page):
+    """Test extraction of month links from year-level page with modern HTML structure (2025)."""
+    month_links = extract_month_links(year_2025_modern_page)
+    
+    # Verify we got some month links
+    assert len(month_links) > 0, "Expected to find month links in the 2025 year page"
+    
+    # Validate each month link
+    for link in month_links:
+        validate_month_link(link)
+        
+    # Check that we have expected months (at least some of them)
+    month_names = {link['month'].lower() for link in month_links}
+    assert any(month in month_names for month in ['january', 'february', 'march']), \
+        "Expected to find at least some common months in the links"
+
+# Month-Level HTML Page Tests
+def test_extract_vacancies_from_month_2001_01_page(month_2001_01_page):
+    """Test extraction of vacancy data from month-level HTML page (January 2001)."""
+    records = extract_vacancy_table(month_2001_01_page)
+    assert len(records) > 0, "Expected to find vacancy records in the January 2001 month page"
     
     for record in records:
         validate_vacancy_record(record)
-    
-    first_record = records[0]
-    assert all(field in first_record for field in ['court', 'vacancy_date', 'incumbent', 'vacancy_reason'])
 
-def test_modern_table_extraction(modern_table_with_links):
-    """Test extraction from modern HTML table structure with additional fields."""
-    records = extract_vacancy_table(modern_table_with_links)
-    assert len(records) > 0, "Expected to find vacancy records in the modern HTML"
-    
-    for record in records:
-        validate_vacancy_record(record)
-    
-    first_record = records[0]
-    assert any(field in first_record for field in ['nominee', 'nomination_date', 'confirmation_date'])
-
-def test_missing_table_handling(missing_table_html):
-    """Test handling of HTML without a table element."""
-    records = extract_vacancy_table(missing_table_html)
-    # TODO: make this test that the extract_vacancy_table() function under test raises some manner of error if no table is found for the input specified
-    assert records == []
-
-def test_monthly_vacancy_extraction(monthly_vacancy_page):
-    """Test extraction from a monthly vacancy page."""
-    records = extract_vacancy_table(monthly_vacancy_page)
-    assert len(records) > 0, "Expected to find vacancy records in monthly page"
-    
-    for record in records:
-        validate_vacancy_record(record)
-
-# PDF Format Tests
-def test_legacy_pdf_error_handling(legacy_pdf_vacancy_page):
-    """Test error handling for legacy PDF format (1981-2001/11)."""
+# Month-Level PDF Page Tests (Unsupported)
+def test_handle_legacy_pdf_month_page(month_1983_01_pdf):
+    """Test error handling for unsupported legacy PDF month page (January 1983)."""
     with pytest.raises(ParseError) as excinfo:
-        extract_vacancy_table(legacy_pdf_vacancy_page.decode('latin-1'))
-    # TODO: replace this test case with expectation of proper PDF support
+        extract_vacancy_table(month_1983_01_pdf.decode('latin-1'))
     assert "PDF format is not currently supported" in str(excinfo.value)
 
-def test_dec_2001_pdf_error_handling(dec_2001_pdf_vacancy_page):
-    """Test error handling for December 2001 PDF format."""
+def test_handle_2001_dec_pdf_month_page(month_2001_12_pdf):
+    """Test error handling for unsupported December 2001 PDF month page."""
     with pytest.raises(ParseError) as excinfo:
-        extract_vacancy_table(dec_2001_pdf_vacancy_page.decode('latin-1'))
-    # TODO: replace this test case with expectation of proper PDF support
+        extract_vacancy_table(month_2001_12_pdf.decode('latin-1'))
     assert "PDF format is not currently supported" in str(excinfo.value)
 
-# Format Analysis Test
-def test_pdf_formats_consistency():
-    """Verify that all PDF files are properly handled (currently all raise ParseError)."""
-    # This test ensures we don't accidentally start supporting PDFs without proper test coverage
-    # TODO: replace this test case with expectation of proper PDF support
+# Special Case Tests
+def test_handle_empty_input():
+    """Test handling of empty or invalid input."""
+    with pytest.raises(ParseError):
+        extract_vacancy_table("")
+    
+    with pytest.raises(ParseError):
+        extract_vacancy_table("<html><body>No table here</body></html>")
+
+def test_verify_all_pdf_formats_unsupported():
+    """Verify that all PDF files consistently raise ParseError."""
     pdf_files = list(FIXTURES_DIR.glob('**/*.pdf'))
     assert len(pdf_files) > 0, "Expected to find PDF fixtures"
     
