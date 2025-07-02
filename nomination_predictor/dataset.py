@@ -1,13 +1,13 @@
 """
 Data pipeline for scraping and processing judicial vacancy data.
 
-This module provides functionality to fetch, parse, and process judicial vacancy
-data from the US Courts website. It includes functions for web scraping, HTML parsing,
-data transformation, and file I/O operations.
+This module provides functionality to fetch, parse, and process judicial vacancy data from the US Courts website. It includes functions for web scraping, HTML parsing, and file I/O operations.
 
-Example:
-    >>> from nomination_predictor.dataset import main
-    >>> main()
+This module can refer to config.py to determine where to retrieve data from, and which folder is being used as the raw data folder in which to store data.
+
+This module is NOT meant as a location for code for data transformations.  Transformations should be done in other modules such as features.py.
+This module shall deliver dataframes which represent their original website sources (tables on HTML pages and PDFs) as accurately and unchanged as feasible, leaving the work of data cleaning or feature creation to other code.
+
 """
 
 from datetime import datetime

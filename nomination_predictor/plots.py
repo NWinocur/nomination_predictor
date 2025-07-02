@@ -1,3 +1,5 @@
+"""This file shall contain code to create visualizations"""
+
 from pathlib import Path
 
 from loguru import logger

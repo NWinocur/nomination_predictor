@@ -1,3 +1,5 @@
+"""This file shall contain project-specific configuration, such as which directories to use for data and models, or which websites to scrape for judicial vacancy data."""
+
 from pathlib import Path
 
 from dotenv import load_dotenv

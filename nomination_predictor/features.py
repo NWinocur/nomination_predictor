@@ -1,3 +1,6 @@
+"""This file contains code to create features for modeling, i.e. data which wasn't in the raw data but which is being made available for the model.
+It shall never output to "raw" data.  It is meant to take raw or interim data as input and deliver interim data as output."""
+
 from pathlib import Path
 
 from loguru import logger

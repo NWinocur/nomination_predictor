@@ -1,3 +1,5 @@
+"""This file shall contain code to perform inference for an already-existing trained model."""
+
 from pathlib import Path
 
 from loguru import logger

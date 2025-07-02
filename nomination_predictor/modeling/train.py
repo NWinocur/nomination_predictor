@@ -1,3 +1,5 @@
+"""This file shall contain code to train a model."""
+
 from pathlib import Path
 
 from loguru import logger
