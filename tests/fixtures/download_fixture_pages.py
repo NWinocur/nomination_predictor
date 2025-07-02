@@ -7,8 +7,9 @@ structure by year and month for use in testing.
 """
 
 import os
-import requests
+
 from bs4 import BeautifulSoup
+import requests
 
 # Directory to store downloaded fixture pages
 FIXTURE_DIR = "tests/fixtures/pages"
