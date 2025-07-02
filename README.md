@@ -8,9 +8,12 @@ A project created for presentation at the end of 4geeks' Data Science and Machin
 
 This project does the following:
 
-1. Scrapes the US Courts website for information about judicial vacancies
-2. Builds a machine learning model to predict the likely time estimate until a nomination is confirmed for a judicial vacancy
-3. Builds a Streamlit webapp with which users can obtain estimates given their inputs (e.g. the type of vacancy, the court, the circuit, etc.) for an existing or hypothetical vacancy.
+1. Scrapes the US Courts website for pages (HTML and PDFs) containing information about judicial vacancies
+2. Extracts information from those pages by parsing year-level pages to look for links to month-level pages, then following those links to the month-level pages to look for their links to HTML tables and/or PDFs of vacancy data.
+3. Stores that information in a pandas dataframe or dataframes to use as input for data cleaning.
+4. Cleans the data to uniquely identify vacancy incidents and tidy away duplicates.  (e.g. If a vacancy existed in one month for a specified courti, previously-sitting judge, date vacancy began, etc., and that vacancy exists in future months, it is inferred that it's the same incident.  Eventually, on a later month, the vacancy may appear again with a newly-named nominee, who may or may not yet be confirmed; this is likewise treated as the same vacancy, so long as the vacancy start date, previously sitting judge, and court are the same.)
+4. Builds a machine learning model to predict the likely time estimate until a nomination occurs or a nomination is confirmed for a judicial vacancy.
+5. Builds a Streamlit webapp with which users can obtain estimates given their inputs (e.g. the type of vacancy, the court, the circuit, etc.) for an existing or hypothetical vacancy.
 
 ## Project Organization
 
