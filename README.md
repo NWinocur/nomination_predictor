@@ -48,7 +48,7 @@ This project does the following:
 ├── requirements.txt   <- The requirements file for reproducing the analysis environment, e.g.
 │                         generated with `pip freeze > requirements.txt`
 │
-├── setup.cfg          <- Configuration file for flake8
+├── setup.cfg          <- Configuration file for development-related tools (e.g. autoformatter settings for Ruff, if not defaults)
 │
 └── nomination_predictor   <- Source code for use in this project.
     │
