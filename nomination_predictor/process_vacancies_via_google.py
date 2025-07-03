@@ -8,14 +8,23 @@ from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 from google.auth.exceptions import DefaultCredentialsError
-from google.cloud import documentai
-
-# from google.cloud.documentai_toolbox import document as documentai_toolbox
-# omitted google-cloud-documentai-toolbox because as of typing this there's no official Python 3.13 support and it breaks upon trying to install one of its dependendcies, pyarrow see https://github.com/googleapis/python-documentai-toolbox/issues/389
+from google.cloud import (
+    documentai_v1 as documentai,  # older version allows access to documentai.Document.DocumentLayout.Block()
+)
 from loguru import logger
 import pandas as pd
 
 from nomination_predictor.dataset import fetch_html
+
+
+def _extract_text_from_layout(layout: documentai.Document.Page.Layout, text: str) -> str:
+    """Extract text from a layout element."""
+    if not layout.text_anchor.text_segments:
+        return ""
+    return "".join(
+        text[int(segment.start_index):int(segment.end_index)]
+        for segment in layout.text_anchor.text_segments
+    ).strip()
 
 
 def _extract_table_data(document: documentai.Document) -> List[Dict[str, Any]]:
@@ -30,25 +39,25 @@ def _extract_table_data(document: documentai.Document) -> List[Dict[str, Any]]:
     tables = []
     
     try:
-        # Use documentai_toolbox for better table extraction
-        wrapped_document = documentai_toolbox.Document.from_documentai_document(document)
-        
-        for page in wrapped_document.pages:
+        for page in document.pages:
             for table in page.tables:
-                # Extract headers (first row)
+                # Extract headers
                 headers = []
-                if table.header_row:
-                    for cell in table.header_row.cells:
-                        headers.append(cell.text.strip())
+                if table.header_rows:
+                    for cell in table.header_rows[0].cells:
+                        cell_text = _extract_text_from_layout(cell.layout, document.text)
+                        headers.append(cell_text)
                 
                 # Extract rows
                 rows = []
-                for table_row in table.body_rows:
-                    row_data = [cell.text.strip() for cell in table_row.cells]
-                    if len(row_data) == len(headers) or not headers:
-                        rows.append(row_data)
+                for row in table.body_rows:
+                    row_data = []
+                    for cell in row.cells:
+                        cell_text = _extract_text_from_layout(cell.layout, document.text)
+                        row_data.append(cell_text)
+                    rows.append(row_data)
                 
-                if rows:  # Only add if we have data
+                if rows:
                     tables.append({
                         "headers": headers if headers else [f"Column_{i+1}" for i in range(len(rows[0]))],
                         "rows": rows
