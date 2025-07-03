@@ -127,7 +127,11 @@ Remember that python's usage of `.env` files doesn't always handle the `~` short
 
 #### Example .env file
 
-`GOOGLE_APPLICATION_CREDENTIALS=/home/username/.gcp/keys/path-to-your-key-file.json`
+`
+GOOGLE_APPLICATION_CREDENTIALS=/home/username/.gcp/keys/path-to-your-key-file.json
+GCP_PROJECT_ID="your-gcp-project-id-here"
+GCP_PROCESSOR_ID="your-document-ai-processor-id-here"
+`
 
 #### Google Cloud Cli installation (not _strictly_ required, but allows checking authentication before trying to run this project)
 
