@@ -62,6 +62,14 @@ create_environment:
 # PROJECT RULES                                                                 #
 #################################################################################
 
+## Check Google Cloud authentication
+.PHONY: check_auth
+check_auth:
+	@echo "Attempting to authenticate using credentials from .env file..."
+	@export $(shell grep -v '^#' .env | xargs) && \
+	gcloud auth print-access-token --quiet > /dev/null && \
+	echo "✅ Authentication successful! .env file is correctly configured." || \
+	(echo "❌ Authentication failed. Check the path in your .env file." && exit 1)
 
 ## Make dataset
 .PHONY: data

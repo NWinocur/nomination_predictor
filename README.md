@@ -102,21 +102,50 @@ This will populate tests/fixtures/pages/ with HTML documents across the full ran
 
 ### Running tests
 
-make test
+`make test`
 
 ## Set up Python environment
 
-make create_environment
-make requirements
+`make create_environment
+make requirements`
 
 ## Run ruff (code formatter) for linting or reformatting
 
-make lint
-make format
+`make lint
+make format`
 
 ## Retrieving data
 
-make data
+Retrieving data can be thought of as happening in two phases: scraping it from the government's site (the easy part), and then parsing it with Google Cloud Document AI (the hard part -- but easier than trying to make sense of the sometimes-messy downloads via previous, non-AI-based methods).  That means the current version of this project is, for at least the data-retrieval portion, entirely reliant upon Google Cloud.
+
+### Google Cloud Authentication
+
+To authenticate with Google Cloud Document AI, you will need a service account key file -- basically a more modern alternative to an API key.
+To avoid having to store this file in the repository (for security), this project utilizes the environment variable `GOOGLE_APPLICATION_CREDENTIALS` pointing to the path of your service account key file.
+To edit the path of this environment variable, edit it in `.env` in the project root folder (which is gitignored by default).
+Remember that python's usage of `.env` files doesn't always handle the `~` shortcut symbol to a homedir properly, so you may want to use the full path to your key file.
+
+#### Example .env file
+
+`GOOGLE_APPLICATION_CREDENTIALS=/home/username/.gcp/keys/path-to-your-key-file.json`
+
+#### Google Cloud Cli installation (not _strictly_ required, but allows checking authentication before trying to run this project)
+
+See <https://cloud.google.com/sdk/docs/install>for how to install the Google Cloud CLI.
+
+#### Checking authentication via Google Cloud CLI
+
+The following command will use that to check whether your .env file correctly specifies a path to a keyfile, and whether that keyfile authenticates successfully:
+
+`make check_auth`
+
+### After authentication is handled
+
+The following command will download the raw data to the `data/raw` folder:
+
+`make data`
+
+If you lack authentication to Google's Document AI service, this _will_ eventually fail.  It will get as far as bulk-downloading HTML files and PDFs from the USCourts.gov website, but lacking Google Cloud auth means you won't have Google's Document AI's help parsing any of the malformed or inconsistently-formed tables and tags, so you won't get usable dataframes out of them.
 
 ## Project Structure
 

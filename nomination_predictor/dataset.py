@@ -228,37 +228,64 @@ def extract_month_links(html: str, base_url: str = "https://www.uscourts.gov") -
         base_url: Base URL to resolve relative links (default: uscourts.gov)
         
     Returns:
-        List of dictionaries with 'url' and 'month' keys
+        List of dictionaries with 'url', 'month', and 'year' keys
+        
+    Raises:
+        ParseError: If there's an error parsing the HTML or extracting links
     """
     try:
         soup = BeautifulSoup(html, "html.parser")
         month_links = []
         
-        # Find all links that match the pattern for monthly reports
+        # Try to extract the year from the page
+        year = None
+        title = soup.find('title')
+        if title:
+            # Look for a 4-digit year in the title
+            import re
+            year_match = re.search(r'\b(19|20)\d{2}\b', title.text)
+            if year_match:
+                year = year_match.group(0)
+        
+        # Find all links that might point to monthly reports
         for link in soup.find_all('a', href=True):
-            href = link['href']
+            href = link['href'].strip()
             text = link.get_text(strip=True).lower()
             
-            # Look for links that match the pattern for monthly reports
-            if '/judicial-vacancies/' in href and any(month in text for month in [
+            # Skip empty or non-month links
+            if not href or not text:
+                continue
+                
+            # Check if this looks like a month link
+            month_match = None
+            for month in [
                 'january', 'february', 'march', 'april', 'may', 'june',
                 'july', 'august', 'september', 'october', 'november', 'december'
-            ]):
+            ]:
+                if month in text:
+                    month_match = month
+                    break
+                    
+            if month_match and '/judicial-vacancies/' in href:
                 # Resolve relative URLs
                 if not href.startswith(('http://', 'https://')):
                     href = f"{base_url.rstrip('/')}/{href.lstrip('/')}"
                 
                 month_links.append({
                     'url': href,
-                    'month': text,
-                    'year': None  # Will be set by the caller
+                    'month': month_match.capitalize(),
+                    'year': year  # May be None if we couldn't determine it
                 })
         
+        if not month_links:
+            raise ParseError("No month links found in the HTML content")
+            
         return month_links
         
     except Exception as e:
-        logger.error(f"Error extracting month links: {e}")
-        raise ParseError(f"Failed to extract month links: {e}")
+        error_msg = f"Error extracting month links: {str(e)}"
+        logger.error(error_msg)
+        raise ParseError(error_msg) from e
 
 
 def records_to_dataframe(records: List[Dict[str, Any]]) -> pd.DataFrame:
