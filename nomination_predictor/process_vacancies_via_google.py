@@ -68,6 +68,79 @@ def _extract_table_data(document: documentai.Document) -> List[Dict[str, Any]]:
     return tables
 
 
+def _extract_table_data(document: documentai.Document) -> List[Dict[str, Any]]:
+    """Extract table data from a Document AI document.
+    
+    Handles both PDF (page-based) and HTML (document_layout-based) documents.
+    
+    Args:
+        document: The Document AI document object
+        
+    Returns:
+        List of dictionaries containing table data
+    """
+    tables = []
+    
+    def process_table(table, doc_text: str) -> Dict[str, Any]:
+        """Helper to process a single table and return its data."""
+        # Extract headers
+        headers = []
+        if hasattr(table, 'header_rows') and table.header_rows:
+            for cell in table.header_rows[0].cells:
+                cell_text = _extract_text_from_layout(cell.layout, doc_text)
+                headers.append(cell_text)
+        
+        # Extract rows
+        rows = []
+        for row in getattr(table, 'body_rows', []):
+            row_data = []
+            for cell in row.cells:
+                cell_text = _extract_text_from_layout(cell.layout, doc_text)
+                row_data.append(cell_text)
+            if row_data:  # Only add non-empty rows
+                rows.append(row_data)
+        
+        return {"headers": headers, "rows": rows}
+    
+    try:
+        # Check for HTML document structure (document_layout)
+        if hasattr(document, 'document_layout') and hasattr(document.document_layout, 'blocks'):
+            # Process HTML document structure
+            for block in document.document_layout.blocks:
+                if hasattr(block, 'table_block') and block.table_block:
+                    table_data = process_table(block.table_block, document.text)
+                    if table_data['rows']:
+                        tables.append(table_data)
+        
+        # Check for PDF document structure (pages)
+        if hasattr(document, 'pages'):
+            # Process PDF document structure
+            for page in document.pages:
+                for table in getattr(page, 'tables', []):
+                    table_data = process_table(table, document.text)
+                    if table_data['rows']:
+                        tables.append(table_data)
+        
+        # If no tables found in either structure, log a warning
+        if not tables:
+            doc_structure = []
+            if hasattr(document, 'document_layout'):
+                doc_structure.append('document_layout')
+            if hasattr(document, 'pages'):
+                doc_structure.append('pages')
+            logger.warning(
+                f"No tables found in document. Detected structure: {', '.join(doc_structure) or 'unknown'}"
+            )
+            
+    except Exception as e:
+        logger.error(f"Error extracting table data: {str(e)}")
+        if hasattr(e, '__traceback__'):
+            logger.debug(f"Traceback: {e.__traceback__}")
+    
+    return tables
+
+
+
 def process_vacancies_to_csv(url: str, output_csv_path: str) -> bool:
     """Process judicial vacancies from HTML page and save to CSV.
     
