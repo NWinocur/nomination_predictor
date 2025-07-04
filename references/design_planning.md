@@ -27,7 +27,7 @@ This document serves as a git-trackable supplement to the IDE code assist LLM's 
 ### 1.2 Scope
 
 - [ ] In scope - see this plan, `readme.md`, `plan.md` (if applicable), and files' docstrings.
-- [ ] Out of scope - anything which could delay project presentation by prescribed deadline (e.g. taking on more datasources before pipeline to process initial set appears stable)
+- [ ] Out of scope - anything which could delay project presentation by prescribed deadline (e.g. taking on more datasources before pipeline to process initial set appears stable), including support for PDF-based inputs
 - [ ] Assumptions - originating data sources are accurate, and quantity of data obtainable from them is sufficient to attempt model training and evaluation.
 - [ ] Constraints - presentations for project to be rehearsed July 16th, 2025, therefore project effectively due that morning or earlier.
 
@@ -59,7 +59,7 @@ graph TD
 1. **Extraction**
    - [ ] Web Scraper
    - [ ] HTML parsing
-   - [ ] PDF parsing
+   - [ ] PDF parsing (not currently supported)
 
 2. **Transformation**
    - [ ] Data Cleaning

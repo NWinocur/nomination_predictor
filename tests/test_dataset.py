@@ -378,6 +378,8 @@ def test_generate_or_fetch_archive_urls():
     assert any(f"year={sample_year}" in url for url in urls), (
         f"Expected to find URL with '?year={sample_year}'"
     )
+    
+    # TODO: ensure that this test case or a separate test case covers that the unit under test generates and/or fetches URLs for 2009 July and newer, i.e. months 07 and newer, excluding monts 01 through 06.
 
 
 def test_extract_month_links_with_real_fixtures(year_archive_paths):
