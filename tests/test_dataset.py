@@ -333,7 +333,7 @@ def test_generate_or_fetch_archive_urls():
     Verifies that:
     1. Returns a list of strings
     2. All URLs are valid HTTP/HTTPS URLs with the correct format
-    3. Covers years from 1981 to current year (inclusive)
+    3. Covers years from 2009 to current year (inclusive)
     4. Uses the correct query parameter format: ?year=YYYY
     """
     # Get the current year
@@ -347,12 +347,12 @@ def test_generate_or_fetch_archive_urls():
     assert all(isinstance(url, str) for url in urls)
     assert all(url.startswith(("http://", "https://")) for url in urls)
 
-    # Check year range (1981 to current year, inclusive)
+    # Check year range (2009 to current year, inclusive)
     years = []
     for url in urls:
         # Extract the year from the URL query parameter
         try:
-            from urllib.parse import urlparse, parse_qs
+            from urllib.parse import parse_qs, urlparse
 
             parsed_url = urlparse(url)
             year = int(parse_qs(parsed_url.query).get("year", [""])[0])
@@ -360,15 +360,15 @@ def test_generate_or_fetch_archive_urls():
 
             # Verify the URL format
             assert parsed_url.path.endswith("/archive-judicial-vacancies"), (
-                f"URL path should end with '/archive-judicial-vacancies'"
+                "URL path should end with '/archive-judicial-vacancies'"
             )
             assert "year=" in parsed_url.query, "URL should contain 'year' query parameter"
 
         except (ValueError, IndexError, AssertionError) as e:
             pytest.fail(f"Invalid URL format: {url}. Error: {e}")
 
-    # Should include all years from 1981 to current year
-    expected_years = list(range(1981, current_year + 1))
+    # Should include all years from 2009 to current year
+    expected_years = list(range(2009, current_year + 1))
     assert sorted(years) == expected_years, (
         f"Expected years {expected_years[0]}-{expected_years[-1]}, got {min(years)}-{max(years)}"
     )

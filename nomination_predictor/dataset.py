@@ -79,14 +79,14 @@ def generate_or_fetch_archive_urls() -> List[str]:
     Generate or fetch URLs for judicial vacancy archive pages.
 
     Returns:
-        List of archive page URLs from 1981 to the current year (inclusive)
+        List of archive page URLs from 2009 to the current year (inclusive)
         in the format: https://www.uscourts.gov/.../archive-judicial-vacancies?year=YYYY
     """
     base_url = "https://www.uscourts.gov/data-news/judicial-vacancies/archive-judicial-vacancies"
     current_year = datetime.now().year
     
-    # Generate URLs from 1981 to the current year (inclusive)
-    start_year = 1981
+    # Generate URLs from 2009 to the current year (inclusive)
+    start_year = 2009
     urls = [f"{base_url}?year={year}" for year in range(start_year, current_year + 1)]
     
     return urls

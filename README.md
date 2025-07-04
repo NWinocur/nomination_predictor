@@ -24,9 +24,9 @@ This project does the following:
 ## Limitations
 
 Judicial vacancy data is available form the US Courts website for years 1981 through present, but formatting of how that data is presented has not been consistent over the years.
-The initial phase of this project is only attempting to train a model using data from 2009 or newer for two reasons:
+The initial phase of this project is only attempting to train a model using data from 2009 July and newer for two reasons:
 
-- Data more recent than 2009 tended to be hosted in a more consistent file format (all HTML instead of a mix of HTML and PDFs), simplifying web scraping and processing.
+- Data from 2009 July and newer has been hosted in a more consistent file format (all HTML instead of a mix of HTML and PDFs), simplifying web scraping and processing.
 - The person who initially gave me the idea for this project informed me that she and/or her predecessors had already performed a related project using data prior to the two most recent presidents, making newer data more interesting than older data.
 
 A future expansion of this project can expand on the web scraping capabilities to gather prior data, including PDFs dating back to the 1980s, and train a model using that more complete dataset.
@@ -129,6 +129,8 @@ make requirements`
 make format`
 
 ## Retrieving data
+
+FIXME: this section of the readme may wind up being largely unnecessary as of de-scoping the project to only include data from 2009 July and newer.  If we end up not needing GCP-based ways of parsing data, simplify this section.
 
 Retrieving data can be thought of as happening in two phases: scraping it from the government's site (the easy part), and then parsing it with Google Cloud Document AI (the hard part -- but easier than trying to make sense of the sometimes-messy downloads via previous, non-AI-based methods).  That means the current version of this project is, for at least the data-retrieval portion, entirely reliant upon Google Cloud.
 
