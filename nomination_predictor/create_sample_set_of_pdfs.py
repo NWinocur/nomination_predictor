@@ -16,7 +16,7 @@ from typing import DefaultDict, Dict, List
 # --- Configuration ---
 # Directory settings
 SOURCE_DIRECTORY = Path("tests/fixtures/pages").resolve()
-DESTINATION_DIRECTORY = Path("data/raw/pdf_samples").resolve()
+DESTINATION_DIRECTORY = Path("data/external/pdf_samples").resolve()
 
 # File patterns to include (case-insensitive)
 TARGET_FILES = {"confirmations.pdf", "vacancies.pdf", "emergencies.pdf"}

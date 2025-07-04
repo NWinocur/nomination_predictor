@@ -9,13 +9,27 @@ A project created for presentation at the end of 4geeks' Data Science and Machin
 This project does the following:
 
 1. Scrapes the US Courts website for pages (HTML and PDFs) containing information about judicial vacancies.  The pages are specified via `config.py`
-2. Extracts information from those pages by parsing year-level pages to look for links to month-level pages, then following those links to the month-level pages to look for their links to HTML tables and/or PDFs of vacancy data.  Web scraping, following links to HTML pages and PDFs, and parsing HTML tables and PDFs is the primary responsibility of `dataset.py`
-3. Stores that information in a raw data folder.  By default, `config.py` specifies that these CSV files are stored in `data/raw`.  Despite the name "CSV" the data uses a different character as a delimiter because characters such as `,` and `.` and `-` and `/` are ubiquitous throughout the original source's fields.
-4. Reads in those raw data files to build a pandas dataframe or dataframes to use as input for data cleaning.
-5. Cleans the data to uniquely identify vacancy incidents and tidy away duplicates.  This is the primary responsibility of `data_cleaning.py`
-6. Feature-engineers data not existing in the raw data, but which is necessary for training a machine learning model.  This is the primary responsibility of `features.py`
-7. Trains a machine learning model to predict the likely time estimate until a nomination occurs or a nomination is confirmed for a judicial vacancy.  This is the primary responsibility of `modeling.py`
-8. Builds a Streamlit webapp with which users can obtain estimates given their inputs (e.g. the type of vacancy, the court, the circuit, etc.) for an existing or hypothetical vacancy.  This webapp makes calls to `predict.py` which performs inference using the trained model.
+2. Parses those year-level pages to look for links to month-level pages.
+3. Follows those links to the month-level pages to look for their links to HTML tables and/or PDFs of Judicial Vacancy data, Judicial Emergency data, and Judicial Confirmation data.
+4. Downloads those pages in their original file format to `data/external`
+5. Normalizes malformed HTML tables (such as from January 2001) into more-readable tables.
+6. Restructures pertinent HTML tables into dataframes.  This is the primary responsibility of `dataset.py`
+7. Stores that information in a raw data folder.  By default, `config.py` specifies that these CSV files are stored in `data/raw`.  Despite the name "CSV" the data uses a different character as a delimiter because characters such as `,` and `.` and `-` and `/` are ubiquitous throughout the original source's fields.
+8. Reads in those raw data files to build a pandas dataframe or dataframes to use as input for data cleaning.
+9. Cleans the data to uniquely identify vacancy incidents and tidy away duplicates.  This is the primary responsibility of `data_cleaning.py`
+10. Feature-engineers data not existing in the raw data, but which is necessary for training a machine learning model.  This is the primary responsibility of `features.py`
+11. Trains a machine learning model to predict the likely time estimate until a nomination occurs or a nomination is confirmed for a judicial vacancy.  This is the primary responsibility of `modeling.py`
+12. Builds a Streamlit webapp with which users can obtain estimates given their inputs (e.g. the type of vacancy, the court, the circuit, etc.) for an existing or hypothetical vacancy.  This webapp makes calls to `predict.py` which performs inference using the trained model.
+
+## Limitations
+
+Judicial vacancy data is available form the US Courts website for years 1981 through present, but formatting of how that data is presented has not been consistent over the years.
+The initial phase of this project is only attempting to train a model using data from 2009 or newer for two reasons:
+
+- Data more recent than 2009 tended to be hosted in a more consistent file format (all HTML instead of a mix of HTML and PDFs), simplifying web scraping and processing.
+- The person who initially gave me the idea for this project informed me that she and/or her predecessors had already performed a related project using data prior to the two most recent presidents, making newer data more interesting than older data.
+
+A future expansion of this project can expand on the web scraping capabilities to gather prior data, including PDFs dating back to the 1980s, and train a model using that more complete dataset.
 
 ## Project Organization
 
