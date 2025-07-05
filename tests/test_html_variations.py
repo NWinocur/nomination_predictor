@@ -3,7 +3,7 @@
 This test suite verifies the extraction of vacancy data from different page types:
 1. Year-level pages (e.g., archive_1983.html, archive_2025.html) - Contain links to monthly reports
 2. Month-level pages (e.g., 2001/01/vacancies.html) - Contain detailed vacancy information
-3. PDF documents (e.g., 1983/01/vacancies.pdf) - Currently unsupported format
+3. ignores as out-of-scope any PDF documents (e.g., 1983/01/vacancies.pdf)
 
 Each test is clearly labeled to indicate the input type and expected behavior.
 """

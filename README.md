@@ -8,18 +8,18 @@ A project created for presentation at the end of 4geeks' Data Science and Machin
 
 This project does the following:
 
-1. Scrapes the US Courts website for pages (HTML and PDFs) containing information about judicial vacancies.  The pages are specified via `config.py`
+1. Scrapes the US Courts website for HTML pages containing information about judicial vacancies. The pages are specified via `config.py`
 2. Parses those year-level pages to look for links to month-level pages.
 3. Follows those links to the month-level pages to look for their links to HTML tables and/or PDFs of Judicial Vacancy data, Judicial Emergency data, and Judicial Confirmation data.
 4. Downloads those pages in their original file format to `data/external`
 5. Normalizes malformed HTML tables (such as from January 2001) into more-readable tables.
 6. Restructures pertinent HTML tables into dataframes.  This is the primary responsibility of `dataset.py`
-7. Stores that information in a raw data folder.  By default, `config.py` specifies that these CSV files are stored in `data/raw`.  Despite the name "CSV" the data uses a different character as a delimiter because characters such as `,` and `.` and `-` and `/` are ubiquitous throughout the original source's fields.
+7. Stores that information in a raw data folder.  By default, `config.py` specifies that these CSV files are stored in `data/raw`. Despite the name "CSV" the data uses a different character as a delimiter because characters such as `,` and `.` and `-` and `/` are ubiquitous throughout the original source's fields.
 8. Reads in those raw data files to build a pandas dataframe or dataframes to use as input for data cleaning.
 9. Cleans the data to uniquely identify vacancy incidents and tidy away duplicates.  This is the primary responsibility of `data_cleaning.py`
 10. Feature-engineers data not existing in the raw data, but which is necessary for training a machine learning model.  This is the primary responsibility of `features.py`
 11. Trains a machine learning model to predict the likely time estimate until a nomination occurs or a nomination is confirmed for a judicial vacancy.  This is the primary responsibility of `modeling.py`
-12. Builds a Streamlit webapp with which users can obtain estimates given their inputs (e.g. the type of vacancy, the court, the circuit, etc.) for an existing or hypothetical vacancy.  This webapp makes calls to `predict.py` which performs inference using the trained model.
+12. Builds a Streamlit webapp with which users can obtain estimates given their inputs (e.g. the type of vacancy, the court, the circuit, etc.) for an existing or hypothetical vacancy. This webapp makes calls to `predict.py` which performs inference using the trained model.
 
 ## Limitations
 

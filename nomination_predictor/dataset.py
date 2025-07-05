@@ -1,30 +1,28 @@
 """
 Data pipeline for scraping and processing judicial vacancy data.
 
-This module provides functionality to fetch, parse, and process judicial vacancy data from the US Courts website. It includes functions for web scraping, HTML parsing, and file I/O operations.
+This module provides functionality to parse and process judicial vacancy data from the US Courts website.
+It includes functions for HTML parsing, data extraction, and file I/O operations.
 
-This module can refer to config.py to determine where to retrieve data from, and which folder is being used as the raw data folder in which to store data.
+This module can refer to config.py to determine which folder is being used as the raw data folder.
 
-This module is NOT meant as a location for code for data transformations.  Transformations should be done in other modules such as features.py.
-This module shall deliver dataframes which represent their original website sources (tables on HTML pages and PDFs) as accurately and unchanged as feasible, leaving the work of data cleaning or feature creation to other code.
-
+This module is NOT meant as a location for code for data transformations. Transformations should be done
+in other modules such as features.py. This module shall deliver dataframes which represent their original
+website sources (tables on HTML pages and PDFs) as accurately and unchanged as feasible, leaving the work
+of data cleaning or feature creation to other code.
 """
 
-from datetime import datetime
 import logging
 from pathlib import Path
 import sys
-import time
 from typing import Any, Dict, List, Union
 
 from bs4 import BeautifulSoup
-from dotenv import find_dotenv, load_dotenv
 import pandas as pd
-import requests
-from tqdm import tqdm
 import typer
 
 from nomination_predictor.config import PROCESSED_DATA_DIR
+from nomination_predictor.web_utils import fetch_html, generate_or_fetch_archive_urls
 
 # Configure logging
 logging.basicConfig(
@@ -34,120 +32,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)  # noqa: F811
 
-# Load environment variables
-load_dotenv(find_dotenv())
-
 app = typer.Typer()
 
 
 # Custom Exceptions
 class DataPipelineError(Exception):
     """Base exception for data pipeline errors."""
-
     pass
 
 
-class FetchError(DataPipelineError):
-    """Raised when there's an error fetching data."""
-
+class ParseError(Exception):
+    """Base exception for parsing errors."""
     pass
-
-
-class ParseError(DataPipelineError):
-    """Raised when there's an error parsing data."""
-
-    pass
-
-
-class ValidationError(DataPipelineError):
-    """Raised when data validation fails."""
-
-    pass
-
-
-def validate_url(url: str) -> bool:
-    """Validate that a URL is well-formed and uses an allowed scheme."""
-    try:
-        result = requests.utils.urlparse(url)
-        return all([result.scheme in ("http", "https"), result.netloc])
-    except Exception:
-        return False
-
-
-def generate_or_fetch_archive_urls() -> List[str]:
-    """
-    Generate or fetch URLs for judicial vacancy archive pages.
-
-    Returns:
-        List of archive page URLs from 2009 to the current year (inclusive)
-        in the format: https://www.uscourts.gov/.../archive-judicial-vacancies?year=YYYY
-    """
-    base_url = "https://www.uscourts.gov/data-news/judicial-vacancies/archive-judicial-vacancies"
-    current_year = datetime.now().year
-    
-    # Generate URLs from 2009 to the current year (inclusive)
-    start_year = 2009
-    urls = [f"{base_url}?year={year}" for year in range(start_year, current_year + 1)]
-    
-    return urls
-
-
-def fetch_html(url: str, max_retries: int = 3, retry_delay: float = 1.0, timeout: int = 30) -> str:
-    """
-    Fetch HTML content from a URL with retries and error handling.
-
-    Args:
-        url: URL to fetch
-        max_retries: Maximum number of retry attempts (must be >= 1)
-        retry_delay: Delay between retries in seconds
-        timeout: Request timeout in seconds (default: 30)
-
-    Returns:
-        str: HTML content as string
-
-    Raises:
-        ValueError: If max_retries is not a positive integer
-        ValidationError: If the URL is invalid
-        FetchError: If the request fails after all retries
-
-    Example:
-        >>> html = fetch_html("https://example.com")
-    """
-    # Validate max_retries
-    if not isinstance(max_retries, int) or max_retries < 1:
-        raise ValueError("max_retries must be a positive integer")
-
-    # Validate URL
-    if not validate_url(url):
-        raise ValidationError(f"Invalid URL: {url}")
-
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            response = requests.get(url, timeout=timeout)
-            response.raise_for_status()
-            return response.text
-
-        except requests.Timeout as e:
-            last_error = f"Request timed out: {e}"
-        except requests.HTTPError as e:
-            status_code = getattr(e.response, "status_code", "unknown")
-            last_error = f"HTTP error {status_code} occurred: {e}"
-            # Don't retry on 4xx errors (except 429 Too Many Requests)
-            if isinstance(status_code, int) and 400 <= status_code < 500 and status_code != 429:
-                break
-        except requests.RequestException as e:
-            last_error = f"Request failed: {e}"
-
-        # If we get here, an exception occurred
-        if attempt < max_retries - 1:
-            time.sleep(retry_delay * (1 + attempt))  # Exponential backoff
-        continue
-
-    # If we've exhausted all retries
-    raise FetchError(
-        f"Failed to fetch {url} after {max_retries} attempts. Last error: {last_error}"
-    )
 
 
 def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
@@ -200,92 +96,77 @@ def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
             if not cells:  # Skip empty rows
                 continue
 
-            # Create record with fields from the row
-            record = {}
-            for i, value in enumerate(cells):
+            # Create a dictionary with the row data
+            row_data = {}
+            for i, cell in enumerate(cells):
                 if i < len(headers):
-                    field_name = headers[i]
-                    # Only include non-empty values
-                    if value and value.strip():
-                        record[field_name] = value.strip()
-
-            # Only add the record if it has required fields
-            if all(field in record for field in ["court", "vacancy_date"]):
-                rows.append(record)
+                    row_data[headers[i]] = cell
+                else:
+                    # If we have more cells than headers, add them with generic keys
+                    row_data[f"column_{i}"] = cell
+            
+            if row_data:  # Only add non-empty rows
+                rows.append(row_data)
 
         return rows
 
     except Exception as e:
-        raise ParseError(f"Failed to parse HTML table: {e}")
+        raise ParseError(f"Error parsing HTML table: {e}") from e
 
 
-def extract_month_links(html: str, base_url: str = "https://www.uscourts.gov") -> List[Dict[str, str]]:
+def extract_month_links(html: str) -> List[Dict[str, Any]]:
     """
-    Extract month-level links from a year page.
-    
+    Extract month links from a year archive page.
+
     Args:
-        html: HTML content of the year page
-        base_url: Base URL to resolve relative links (default: uscourts.gov)
-        
+        html: HTML content of a year archive page
+
     Returns:
-        List of dictionaries with 'url', 'month', and 'year' keys
-        
-    Raises:
-        ParseError: If there's an error parsing the HTML or extracting links
+        List of dictionaries with keys:
+        - url: URL to the month's vacancy page
+        - month: Name of the month
+        - year: None (to be set by the caller)
     """
     try:
         soup = BeautifulSoup(html, "html.parser")
         month_links = []
+
+        # Modern format (2025+): Look for links in the main content
+        content = soup.find('main') or soup.find('div', class_='main-content') or soup
         
-        # Try to extract the year from the page
-        year = None
-        title = soup.find('title')
-        if title:
-            # Look for a 4-digit year in the title
-            import re
-            year_match = re.search(r'\b(19|20)\d{2}\b', title.text)
-            if year_match:
-                year = year_match.group(0)
-        
-        # Find all links that might point to monthly reports
-        for link in soup.find_all('a', href=True):
-            href = link['href'].strip()
-            text = link.get_text(strip=True).lower()
+        # Find all links that might point to month pages
+        for link in content.find_all('a', href=True):
+            href = link['href'].lower()
+            text = link.get_text(strip=True)
             
             # Skip empty or non-month links
-            if not href or not text:
-                continue
-                
-            # Check if this looks like a month link
-            month_match = None
-            for month in [
+            if not text or not any(month in text.lower() for month in [
                 'january', 'february', 'march', 'april', 'may', 'june',
                 'july', 'august', 'september', 'october', 'november', 'december'
-            ]:
-                if month in text:
-                    month_match = month
-                    break
-                    
-            if month_match and '/judicial-vacancies/' in href:
-                # Resolve relative URLs
-                if not href.startswith(('http://', 'https://')):
-                    href = f"{base_url.rstrip('/')}/{href.lstrip('/')}"
-                
-                month_links.append({
-                    'url': href,
-                    'month': month_match.capitalize(),
-                    'year': year  # May be None if we couldn't determine it
-                })
-        
-        if not month_links:
-            raise ParseError("No month links found in the HTML content")
+            ]):
+                continue
             
-        return month_links
+            # Clean up the month name
+            month_name = text.strip().lower()
+            month_name = month_name.split(' ')[0]  # In case it's "January 2025"
+            
+            # Create absolute URL if needed
+            url = link['href']
+            if not url.startswith(('http://', 'https://')):
+                # Handle relative URLs - we'll make them absolute in the calling function
+                if not url.startswith('/'):
+                    url = f'/{url}'
+            
+            month_links.append({
+                'url': url,
+                'month': month_name.capitalize(),
+                'year': None  # Will be set by the caller
+            })
         
+        return month_links
+
     except Exception as e:
-        error_msg = f"Error extracting month links: {str(e)}"
-        logger.error(error_msg)
-        raise ParseError(error_msg) from e
+        raise ParseError(f"Error extracting month links: {e}") from e
 
 
 def records_to_dataframe(records: List[Dict[str, Any]]) -> pd.DataFrame:
@@ -356,7 +237,7 @@ def main(output_dir: Path = PROCESSED_DATA_DIR, output_filename: str = "judicial
         urls = generate_or_fetch_archive_urls()
         all_records = []
 
-        for url in tqdm(urls, desc="Processing archive pages"):
+        for url in urls:
             try:
                 html = fetch_html(url)
                 records = extract_vacancy_table(html)

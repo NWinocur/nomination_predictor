@@ -1,6 +1,9 @@
 """
 This module provides functionality to extract judicial vacancy data from HTML pages
 using Google Cloud's Document AI service and save the results to a CSV file.
+
+TODO: if we're able to parse HTML purely locally, get rid of this file.  If we need GCP Doc AI, update this file to handle new no-PDF de-scope until we've proven out HTML-only parsing.
+
 """
 import mimetypes
 import os
