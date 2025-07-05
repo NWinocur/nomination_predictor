@@ -92,56 +92,77 @@ def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
     Returns:
         List of vacancy records as dictionaries
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     records = []
     rows = table.find_all('tr')
+    logger.debug(f"Found {len(rows)} total rows in legacy table")
     
     # Skip the first two rows (title and header)
-    for row in rows[2:]:
+    for i, row in enumerate(rows[2:], start=2):
         cells = row.find_all('td')
-        if len(cells) < 4:  # Need at least 4 cells for required fields
-            continue
-            
-        # Extract cell text and clean whitespace
         cell_texts = [cell.get_text(strip=True) for cell in cells]
         
-        # Skip rows that don't have enough data or have empty required fields
-        if not all(cell_texts[0:4]):  # First 4 cells are required
+        # Skip rows with insufficient cells
+        if len(cells) < 4:
+            logger.debug(f"Skipping row {i}: Only {len(cells)} cells found, need at least 4")
             continue
             
-        # Check if this looks like a valid court identifier (e.g., "01 - CCA" or "01 - MA")
+        # Check if this looks like a valid court identifier
+        # Accepts formats like:
+        # - "01 - CCA" (number - abbreviation)
+        # - "DC - DC" (abbreviation - abbreviation)
+        # - "FD - CCA" (abbreviation - abbreviation)
+        # - "1st Circuit" (descriptive name)
         court = cell_texts[0]
-        if not (re.match(r'^\d+\s*-\s*[A-Za-z]+', court) or 
-                re.match(r'^[A-Za-z\s]+(?:Circuit|Court|District)', court, re.IGNORECASE)):
+        court_match = (
+            re.match(r'^\d+\s*-\s*[A-Za-z]+', court) or  # 01 - CCA
+            re.match(r'^[A-Za-z]+\s*-\s*[A-Za-z]+', court) or  # DC - DC, FD - CCA
+            re.match(r'^[A-Za-z\s]+(?:Circuit|Court|District)', court, re.IGNORECASE)  # 1st Circuit
+        )
+        
+        if not court_match:
+            logger.debug(f"Skipping row {i}: Invalid court format: '{court}'")
             continue
             
-        # Check if vacancy date is in expected format
-        vacancy_date = cell_texts[3]
+        # Check if vacancy date is in expected format (MM/DD/YYYY)
+        vacancy_date = cell_texts[3].strip()
         if not re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', vacancy_date):
+            logger.debug(f"Skipping row {i}: Invalid date format: '{vacancy_date}'")
             continue
             
-        # Skip rows that look like headers (containing words like 'Circuit', 'District', 'Incumbent', etc.)
-        header_indicators = ['circuit', 'district', 'incumbent', 'vacancy', 'reason', 'nominee', 'date']
-        if any(any(indicator in cell.lower() for indicator in header_indicators) for cell in cell_texts):
+        # Skip header-like rows (check for common header terms in first few cells)
+        header_indicators = ['circuit', 'district', 'incumbent', 'vacancy', 
+                           'reason', 'nominee', 'date', 'judge']
+        
+        # Only check the first 4 cells for header indicators
+        if any(indicator in cell.lower()
+               for cell in cell_texts[:4]
+               for indicator in header_indicators):
+            logger.debug(f"Skipping row {i}: Contains header-like content: {cell_texts}")
             continue
             
         # Create record with required fields
         record = {
             'court': court,
-            'incumbent': cell_texts[1],
-            'vacancy_reason': cell_texts[2],
+            'incumbent': cell_texts[1].strip(),
+            'vacancy_reason': cell_texts[2].strip(),
             'vacancy_date': vacancy_date,
         }
         
         # Add optional fields if they exist and are not empty
-        if len(cell_texts) > 4 and cell_texts[4].strip():  # Nominee
+        if len(cell_texts) > 4 and cell_texts[4].strip():
             record['nominee'] = cell_texts[4].strip()
             
-        if len(cell_texts) > 5 and cell_texts[5].strip():  # Nomination date
+        if len(cell_texts) > 5 and cell_texts[5].strip():
             if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', cell_texts[5].strip()):
                 record['nomination_date'] = cell_texts[5].strip()
-                
+        
+        logger.debug(f"Adding record: {record}")
         records.append(record)
     
+    logger.info(f"Extracted {len(records)} records from legacy table")
     return records
 
 
@@ -184,6 +205,9 @@ def _extract_table_data(table: Any, headers: List[str], skip_rows: int = 0) -> L
 def _detect_table_format(table: Any) -> str:
     """Detect the format of the table (modern or legacy).
     
+    Modern tables typically have <thead> and <tbody> sections, while legacy tables
+    have header rows with <strong> tags or specific text patterns.
+    
     Args:
         table: BeautifulSoup table element
         
@@ -194,14 +218,36 @@ def _detect_table_format(table: Any) -> str:
     if table.find('thead') or table.find('tbody'):
         return 'modern'
     
-    # Check for legacy format indicators
-    first_row = table.find('tr')
-    if first_row:
-        headers = [th.get_text(strip=True).lower() for th in first_row.find_all(['th', 'td'])]
-        if any('court' in h for h in headers):
+    # Check for legacy format indicators by examining the first few rows
+    rows = table.find_all('tr', limit=5)  # Only check first 5 rows for efficiency
+    
+    # Common header patterns in legacy tables
+    legacy_header_indicators = [
+        'circuit', 'district', 'incumbent', 'vacancy', 'reason', 
+        'nominee', 'date', 'judge', 'court'
+    ]
+    
+    for row in rows:
+        # Check for header cells with <strong> tags
+        strong_cells = row.find_all(['th', 'td'])
+        strong_texts = [cell.get_text(strip=True).lower() for cell in strong_cells]
+        
+        # Count how many cells contain legacy header indicators
+        matching_cells = sum(
+            1 for text in strong_texts 
+            if any(indicator in text for indicator in legacy_header_indicators)
+        )
+        
+        # If we find a row where most cells look like headers, it's likely a legacy table
+        if matching_cells >= 2 and len(strong_texts) > 0 and matching_cells / len(strong_texts) >= 0.5:
+            return 'legacy'
+            
+        # Also check for text directly in cells (without strong tags)
+        cell_texts = [cell.get_text(strip=True).lower() for cell in row.find_all(['th', 'td'])]
+        if any(indicator in cell for cell in cell_texts[:4] for indicator in legacy_header_indicators):
             return 'legacy'
     
-    # Default to modern if we can't determine
+    # Default to modern if we can't determine with high confidence
     return 'modern'
 
 
