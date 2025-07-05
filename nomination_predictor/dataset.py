@@ -14,6 +14,7 @@ of data cleaning or feature creation to other code.
 
 import logging
 from pathlib import Path
+import re
 import sys
 from typing import Any, Dict, List, Union
 
@@ -45,9 +46,170 @@ class ParseError(Exception):
     pass
 
 
+def _extract_modern_format(table: Any) -> List[Dict[str, str]]:
+    """Extract data from modern (2016+) HTML format.
+    
+    Args:
+        table: BeautifulSoup table element
+        
+    Returns:
+        List of dictionaries with extracted data
+    """
+    # Extract headers from thead if available
+    headers = []
+    thead = table.find('thead')
+    if thead:
+        header_row = thead.find('tr')
+        if header_row:
+            headers = [
+                th.get_text(strip=True).lower().replace(' ', '_')
+                for th in header_row.find_all(['th', 'td'])
+            ]
+    
+    # If no headers in thead, try to find them in the first row of tbody
+    if not headers:
+        tbody = table.find('tbody')
+        if tbody:
+            first_row = tbody.find('tr')
+            if first_row:
+                headers = [
+                    th.get_text(strip=True).lower().replace(' ', '_')
+                    for th in first_row.find_all(['th', 'td'])
+                ]
+    
+    return _extract_table_data(table, headers)
+
+
+def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
+    """Extract vacancy data from legacy format HTML tables (pre-2016).
+    
+    Legacy tables have a different structure than modern ones, with header rows
+    and footer rows that need to be filtered out.
+    
+    Args:
+        table: BeautifulSoup table element
+        
+    Returns:
+        List of vacancy records as dictionaries
+    """
+    records = []
+    rows = table.find_all('tr')
+    
+    # Skip the first two rows (title and header)
+    for row in rows[2:]:
+        cells = row.find_all('td')
+        if len(cells) < 4:  # Need at least 4 cells for required fields
+            continue
+            
+        # Extract cell text and clean whitespace
+        cell_texts = [cell.get_text(strip=True) for cell in cells]
+        
+        # Skip rows that don't have enough data or have empty required fields
+        if not all(cell_texts[0:4]):  # First 4 cells are required
+            continue
+            
+        # Check if this looks like a valid court identifier (e.g., "01 - CCA" or "01 - MA")
+        court = cell_texts[0]
+        if not (re.match(r'^\d+\s*-\s*[A-Za-z]+', court) or 
+                re.match(r'^[A-Za-z\s]+(?:Circuit|Court|District)', court, re.IGNORECASE)):
+            continue
+            
+        # Check if vacancy date is in expected format
+        vacancy_date = cell_texts[3]
+        if not re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', vacancy_date):
+            continue
+            
+        # Skip rows that look like headers (containing words like 'Circuit', 'District', 'Incumbent', etc.)
+        header_indicators = ['circuit', 'district', 'incumbent', 'vacancy', 'reason', 'nominee', 'date']
+        if any(any(indicator in cell.lower() for indicator in header_indicators) for cell in cell_texts):
+            continue
+            
+        # Create record with required fields
+        record = {
+            'court': court,
+            'incumbent': cell_texts[1],
+            'vacancy_reason': cell_texts[2],
+            'vacancy_date': vacancy_date,
+        }
+        
+        # Add optional fields if they exist and are not empty
+        if len(cell_texts) > 4 and cell_texts[4].strip():  # Nominee
+            record['nominee'] = cell_texts[4].strip()
+            
+        if len(cell_texts) > 5 and cell_texts[5].strip():  # Nomination date
+            if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', cell_texts[5].strip()):
+                record['nomination_date'] = cell_texts[5].strip()
+                
+        records.append(record)
+    
+    return records
+
+
+def _extract_table_data(table: Any, headers: List[str], skip_rows: int = 0) -> List[Dict[str, str]]:
+    """Extract data from a table with the given headers.
+    
+    Args:
+        table: BeautifulSoup table element
+        headers: List of header names
+        skip_rows: Number of rows to skip (e.g., for header rows)
+        
+    Returns:
+        List of dictionaries with extracted data
+    """
+    rows = []
+    tbody = table.find('tbody') or table  # Use tbody if it exists, otherwise use the whole table
+    
+    for i, row in enumerate(tbody.find_all('tr')):
+        if i < skip_rows:
+            continue
+            
+        cells = [td.get_text(strip=True) for td in row.find_all(['td', 'th'])]
+        if not cells:
+            continue
+            
+        # Create a dictionary with the row data
+        row_data = {}
+        for j, cell in enumerate(cells):
+            if j < len(headers):
+                row_data[headers[j]] = cell
+            else:
+                row_data[f'column_{j}'] = cell
+                
+        if row_data:  # Only add non-empty rows
+            rows.append(row_data)
+    
+    return rows
+
+
+def _detect_table_format(table: Any) -> str:
+    """Detect the format of the table (modern or legacy).
+    
+    Args:
+        table: BeautifulSoup table element
+        
+    Returns:
+        'modern' or 'legacy' based on the table structure
+    """
+    # Check for modern format indicators
+    if table.find('thead') or table.find('tbody'):
+        return 'modern'
+    
+    # Check for legacy format indicators
+    first_row = table.find('tr')
+    if first_row:
+        headers = [th.get_text(strip=True).lower() for th in first_row.find_all(['th', 'td'])]
+        if any('court' in h for h in headers):
+            return 'legacy'
+    
+    # Default to modern if we can't determine
+    return 'modern'
+
+
 def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
     """
     Extract judicial vacancy data from month-level HTML content.
+
+    Handles both older (pre-2016) and newer (2016+) HTML formats.
 
     Args:
         html: HTML content containing a table with judicial vacancy data
@@ -63,51 +225,41 @@ def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
         - confirmation_date: Date of confirmation (if any)
     """
     try:
-        soup = BeautifulSoup(html, "html.parser")
-        table = soup.find("table")
+        soup = BeautifulSoup(html, 'html.parser')
+        table = soup.find('table')
         if not table:
             return []
-
-        # Get headers and normalize them (lowercase, replace spaces with underscores)
-        headers = []
-        header_row = table.find("tr")
-        if header_row:
-            headers = [
-                th.get_text(strip=True).lower().replace(" ", "_")
-                for th in header_row.find_all(["th", "td"])
-            ]
+        
+        # Detect table format and extract data accordingly
+        format_type = _detect_table_format(table)
+        if format_type == 'modern':
+            records = _extract_modern_format(table)
         else:
-            # If no header row, use default column names based on position
-            headers = [
-                "court", 
-                "vacancy_date", 
-                "incumbent", 
-                "vacancy_reason", 
-                "nominee", 
-                "nomination_date", 
-                "confirmation_date"
-            ]
-
-        rows = []
-        # Skip header row if it exists
-        for row in table.find_all("tr")[1 if header_row else 0:]:
-            cells = [td.get_text(strip=True) for td in row.find_all(["td", "th"])]
-            if not cells:  # Skip empty rows
-                continue
-
-            # Create a dictionary with the row data
-            row_data = {}
-            for i, cell in enumerate(cells):
-                if i < len(headers):
-                    row_data[headers[i]] = cell
-                else:
-                    # If we have more cells than headers, add them with generic keys
-                    row_data[f"column_{i}"] = cell
-            
-            if row_data:  # Only add non-empty rows
-                rows.append(row_data)
-
-        return rows
+            records = _extract_legacy_format(table)
+        
+        # Standardize field names
+        field_mapping = {
+            # Modern format field names
+            'vacant_judgeship': 'incumbent',
+            'date_of_vacancy': 'vacancy_date',
+            'reason_for_vacancy': 'vacancy_reason',
+            # Legacy format field names
+            'judge': 'incumbent',
+            'date': 'vacancy_date',
+            'reason': 'vacancy_reason',
+            'date_of_nomination': 'nomination_date',
+            'date_of_confirmation': 'confirmation_date',
+        }
+        
+        standardized_records = []
+        for record in records:
+            standardized = {}
+            for old_key, value in record.items():
+                new_key = field_mapping.get(old_key.lower(), old_key)
+                standardized[new_key] = value.strip() if isinstance(value, str) else value
+            standardized_records.append(standardized)
+        
+        return standardized_records
 
     except Exception as e:
         raise ParseError(f"Error parsing HTML table: {e}") from e

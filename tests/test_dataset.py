@@ -128,7 +128,7 @@ def test_extract_vacancy_table(year, month, expected_vacancies, expected_nominee
         for field in expected_fields:
             assert field in record, f"Missing expected field '{field}' in record: {record}"
             assert record[field], f"Empty value for required field '{field}' in record: {record}"
-        
+    
         # Check that date fields can be parsed if they exist
         for date_field in ["vacancy_date", "nomination_date", "confirmation_date"]:
             if date_field in record and record[date_field]:
