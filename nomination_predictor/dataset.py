@@ -114,59 +114,38 @@ def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
         raise ParseError(f"Error parsing HTML table: {e}") from e
 
 
-def extract_month_links(html: str) -> List[Dict[str, Any]]:
+def generate_month_links(year: int) -> List[Dict[str, Any]]:
     """
-    Extract month links from a year archive page.
+    Generate month links for a given year.
+    
+    The URLs follow a predictable pattern:
+    https://www.uscourts.gov//judges-judgeships/judicial-vacancies/archive-judicial-vacancies/YYYY/MM/vacancies
 
     Args:
-        html: HTML content of a year archive page
+        year: Year of the archive page
 
     Returns:
         List of dictionaries with keys:
         - url: URL to the month's vacancy page
-        - month: Name of the month
-        - year: None (to be set by the caller)
+        - month: two-digit number of the month as a string (single-digit months are zero-padded)
+        - year: 4-digit year of the archive page
     """
     try:
-        soup = BeautifulSoup(html, "html.parser")
         month_links = []
-
-        # Modern format (2025+): Look for links in the main content
-        content = soup.find('main') or soup.find('div', class_='main-content') or soup
-        
-        # Find all links that might point to month pages
-        for link in content.find_all('a', href=True):
-            href = link['href'].lower()
-            text = link.get_text(strip=True)
-            
-            # Skip empty or non-month links
-            if not text or not any(month in text.lower() for month in [
-                'january', 'february', 'march', 'april', 'may', 'june',
-                'july', 'august', 'september', 'october', 'november', 'december'
-            ]):
-                continue
-            
-            # Clean up the month name
-            month_name = text.strip().lower()
-            month_name = month_name.split(' ')[0]  # In case it's "January 2025"
-            
-            # Create absolute URL if needed
-            url = link['href']
-            if not url.startswith(('http://', 'https://')):
-                # Handle relative URLs - we'll make them absolute in the calling function
-                if not url.startswith('/'):
-                    url = f'/{url}'
+        for i in range(1, 13):
+            month_num = f"{i:02d}"  # Zero-pad month number
+            url = f"/judges-judgeships/judicial-vacancies/archive-judicial-vacancies/{year}/{month_num}/vacancies"
             
             month_links.append({
                 'url': url,
-                'month': month_name.capitalize(),
-                'year': None  # Will be set by the caller
+                'month': month_num,
+                'year': year
             })
         
         return month_links
-
+        
     except Exception as e:
-        raise ParseError(f"Error extracting month links: {e}") from e
+        raise ParseError(f"Error generating month links: {e}") from e
 
 
 def records_to_dataframe(records: List[Dict[str, Any]]) -> pd.DataFrame:

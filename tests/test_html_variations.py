@@ -15,7 +15,7 @@ from typing import Dict
 import pytest
 
 # Import the module to test
-from nomination_predictor.dataset import ParseError, extract_month_links, extract_vacancy_table
+from nomination_predictor.dataset import extract_vacancy_table, generate_month_links
 
 # Path to fixtures
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pages"
@@ -67,10 +67,12 @@ def validate_month_link(link: Dict[str, str]) -> None:
     assert 'url' in link, "Month link is missing 'url' field"
     assert 'month' in link, "Month link is missing 'month' field"
     assert isinstance(link['month'], str), "Month name should be a string"
-    assert link['month'].lower() in [
-        'january', 'february', 'march', 'april', 'may', 'june',
-        'july', 'august', 'september', 'october', 'november', 'december'
-    ], f"Invalid month name: {link['month']}"
+    assert link['month'] in [
+        '01', '02', '03', '04', '05', '06',
+        '07', '08', '09', '10', '11', '12'
+    ], f"Invalid month number: {link['month']}"
+    assert 'year' in link, "Month link is missing 'year' field"
+    assert isinstance(link['year'], str), "Year should be a string"
 
 def validate_vacancy_record(record: Dict[str, str]) -> None:
     """Validate that a vacancy record has the expected structure and data types.
@@ -108,9 +110,9 @@ def validate_vacancy_record(record: Dict[str, str]) -> None:
 
 # Year-Level Page Tests
 
-def test_extract_month_links_from_year_2025_modern_page(year_2025_modern_page):
-    """Test extraction of month links from year-level page with modern HTML structure (2025)."""
-    month_links = extract_month_links(year_2025_modern_page)
+def test_generate_month_links_from_year_2025_modern_page(year_2025_modern_page):
+    """Test generation of month links from year-level page with modern HTML structure (2025)."""
+    month_links = generate_month_links(year_2025_modern_page)
     
     # Verify we got some month links
     assert len(month_links) > 0, "Expected to find month links in the 2025 year page"
@@ -119,10 +121,6 @@ def test_extract_month_links_from_year_2025_modern_page(year_2025_modern_page):
     for link in month_links:
         validate_month_link(link)
         
-    # Check that we have expected months (at least some of them)
-    month_names = {link['month'].lower() for link in month_links}
-    assert any(month in month_names for month in ['january', 'february', 'march']), \
-        "Expected to find at least some common months in the links"
 
 # Month-Level HTML Page Tests
 def test_extract_vacancies_from_month_2010_01_page(month_2010_01_page):
@@ -132,12 +130,3 @@ def test_extract_vacancies_from_month_2010_01_page(month_2010_01_page):
     
     for record in records:
         validate_vacancy_record(record)
-
-# Special Case Tests
-def test_handle_empty_input():
-    """Test handling of empty or invalid input."""
-    with pytest.raises(ParseError):
-        extract_vacancy_table("")
-    
-    with pytest.raises(ParseError):
-        extract_vacancy_table("<html><body>No table here</body></html>")

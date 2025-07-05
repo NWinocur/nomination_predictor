@@ -136,74 +136,70 @@ def generate_or_fetch_archive_urls() -> List[str]:
 
 def extract_month_links(html: str) -> List[Dict[str, Any]]:
     """
-    Extract month links from a year archive page.
-
+    Generate month links based on the year from the provided HTML.
+    
+    The URL pattern for vacancy pages is predictable and follows this structure:
+    /judges-judgeships/judicial-vacancies/archive-judicial-vacancies/YYYY/MM/vacancies
+    
     Args:
-        html: HTML content of a year archive page
-
+        html: HTML content of a year archive page (used to extract the year)
+        
     Returns:
         List of dictionaries with keys:
-        - url: URL to the month's vacancy page
-        - month: Name of the month
-        - year: None (to be set by the caller)
+        - emergencies_url: URL to the month's emergencies page
+        - vacancies_url: URL to the month's vacancies page
+        - confirmations_url: URL to the month's confirmations page
+        - month: Name of the month (casefolded for more consistent comparisons/matching)
     """
     try:
+        # Extract year from the HTML
         soup = BeautifulSoup(html, "html.parser")
-        month_links = []
+        title = soup.find('title')
+        year = None
         
-        # Find the main content area
-        content = soup.find('main') or soup.find('div', class_='layout-content') or soup
+        # Try to extract year from title if available
+        if title and title.string:
+            # Look for a 4-digit year in the title
+            import re
+            year_match = re.search(r'\b(20\d{2})\b', title.string)
+            if year_match:
+                year = int(year_match.group(1))
         
-        # Look for the table containing month links
-        table = content.find('table', class_='usa-table')
-        if not table:
-            raise ParseError("Could not find the months table in the HTML")
+        # If year not found in title, try to get it from the URL in the page
+        if year is None:
+            # Look for the current year in the archive links
+            year_links = soup.find_all('a', href=re.compile(r'archive-judicial-vacancies\?year=(\d{4})'))
+            if year_links:
+                # Get the first year link that looks like a year
+                for link in year_links:
+                    year_match = re.search(r'year=(\d{4})', link.get('href', ''))
+                    if year_match:
+                        year = int(year_match.group(1))
+                        break
         
-        # Find all table rows (skip header row)
-        rows = table.find('tbody').find_all('tr')
+        # If we still don't have a year, use the current year as a fallback
+        if year is None:
+            from datetime import datetime
+            year = datetime.now().year
         
-        # Define valid month names for validation
-        valid_months = [
-            'january', 'february', 'march', 'april', 'may', 'june',
-            'july', 'august', 'september', 'october', 'november', 'december'
+        # Generate month links for the year
+        months = [
+            'January', 'February', 'March', 'April', 'May', 'June',
+            'July', 'August', 'September', 'October', 'November', 'December'
         ]
         
-        for row in rows:
-            # Get the month cell (first cell in the row)
-            month_cell = row.find('td')
-            if not month_cell:
-                continue
-                
-            # Get and clean the month name
-            month_name = month_cell.get_text(strip=True).lower()
-            
-            # Validate month name
-            if month_name not in valid_months:
-                continue
-                
-            # Find the first link in the second cell (vacancies link)
-            links_cell = month_cell.find_next_sibling('td')
-            if not links_cell:
-                continue
-                
-            # Look for the vacancies link (first link in the cell)
-            link = links_cell.find('a', href=True)
-            if not link:
-                continue
-                
-            # Get and clean the URL
-            url = link['href'].strip()
-            if not url.startswith(('http://', 'https://')):
-                if not url.startswith('/'):
-                    url = f'/{url}'
+        month_links = []
+        for i, month in enumerate(months, 1):
+            month_num = f"{i:02d}"  # Zero-pad month number
+            url = f"/judges-judgeships/judicial-vacancies/archive-judicial-vacancies/{year}/{month_num}/vacancies"
             
             month_links.append({
                 'url': url,
-                'month': month_name.capitalize(),
-                'year': None  # Will be set by the caller
+                'month': month,
+                'year': year
             })
         
         return month_links
-
+        
     except Exception as e:
-        raise ParseError(f"Error extracting month links: {e}") from e
+        raise ParseError(f"Error generating month links: {e}") from e

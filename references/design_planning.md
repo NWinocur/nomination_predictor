@@ -71,6 +71,13 @@ graph TD
    - [ ] Trained model file Export
    - [ ] Inference using trained model
 
+### 2.4 Observations about source data
+
+Quick analyses of the source data have indicated format changes such as:
+
+- from 2015 May to 2015 June, simpler to more complex CSS and other tags
+- from 2014 Dec to 2015 Jan -- few or no obviously-user-facing-visible changes, but possible backend change to begin using new (Drupal-based?) CSS classes
+
 ## 3. Data Model
 
 ### 3.1 Entity Relationship Diagram
