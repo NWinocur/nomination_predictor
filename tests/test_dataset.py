@@ -52,23 +52,13 @@ def validate_vacancy_record(record: Dict[str, str]) -> None:
             assert isinstance(record[field], field_type), f"{field} should be {field_type.__name__}"
 
 
-# Fixtures
-@pytest.fixture
-def real_vacancy_html():
+def get_pre_downloaded_vacancies_html_from(year, month_num):
     """Return the content of a real vacancies page from the fixtures."""
-    path = Path(__file__).parent / "fixtures" / "pages" / "2025" / "01" / "vacancies.html"
+    path = Path(__file__).parent / "fixtures" / "pages" / str(year) / month_num / "vacancies.html"
     with open(path, 'r', encoding='utf-8') as f:
         return f.read()
 
-
-@pytest.fixture
-def month_2010_01_page():
-    """Return the content of the January 2010 vacancies page from fixtures."""
-    path = Path(__file__).parent / "fixtures" / "pages" / "2010" / "01" / "vacancies.html"
-    with open(path, 'r', encoding='utf-8') as f:
-        return f.read()
-
-
+# Fixtures
 @pytest.fixture
 def sample_dataframe():
     """Create a sample DataFrame for testing."""
@@ -95,17 +85,32 @@ def year_archive_paths(fixtures_dir):
 
 
 # Tests
-@pytest.mark.parametrize("year,month,expected_records", [
-    (2010, "01", 101),  # January 2010
-    (2025, "01", 40),    # January 2025
+@pytest.mark.parametrize("year,month,expected_vacancies,expected_nominees_pending", [
+    # Test different HTML formats across years
+    (2010, "01", 110, 53),    # Older format
+    (2014, "01", 92, 53),    # Older format
+    (2015, "01", 43, 0),    # Transitional period
+    (2016, "01", 75, 34),    # Modern format
+    (2020, "01", 80, 51),    # Modern format (mid-range)
+    (2025, "01", 40, 0),
 ])
-def test_extract_vacancy_table(month_2010_01_page, real_vacancy_html, year, month, expected_records):
-    """Test extraction of vacancy data from HTML using real fixtures from different years."""
-    # Select the appropriate fixture based on year
-    html_content = month_2010_01_page if year == 2010 else real_vacancy_html
+def test_extract_vacancy_table(year, month, expected_vacancies, expected_nominees_pending):
+    """Test extraction of vacancy data from HTML using real fixtures from different years.
     
+    Tests multiple years to ensure compatibility with different HTML formats.
+    
+    Args:
+        year: The year to test
+        month: The month to test (as 'MM' string)
+        expected_vacancies: Expected number of vacancies (including ones with or without a nominee pending)
+        expected_nominees_pending: Expected number of nominees pending (vacancies with a nominee named and nomination date)
+    """
+
+    html_content = get_pre_downloaded_vacancies_html_from(year, month)
     records = extract_vacancy_table(html_content)
-    assert len(records) >= expected_records, f"Expected at least {expected_records} records for {month}/{year}"
+    
+    # Check record count is within expected range
+    assert expected_vacancies == len(records), f"Expected {expected_vacancies} records for {month}/{year}, got {len(records)}"
     
     # Check that we have expected fields based on the actual HTML structure
     expected_fields = {
@@ -119,9 +124,10 @@ def test_extract_vacancy_table(month_2010_01_page, real_vacancy_html, year, mont
         # Validate the record structure and content
         validate_vacancy_record(record)
         
-        # Check that all required fields are present
+        # Check that all required fields are present and non-empty
         for field in expected_fields:
             assert field in record, f"Missing expected field '{field}' in record: {record}"
+            assert record[field], f"Empty value for required field '{field}' in record: {record}"
         
         # Check that date fields can be parsed if they exist
         for date_field in ["vacancy_date", "nomination_date", "confirmation_date"]:
