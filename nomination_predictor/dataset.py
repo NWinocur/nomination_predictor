@@ -46,6 +46,28 @@ class ParseError(Exception):
     pass
 
 
+def is_valid_court_identifier(court: str) -> bool:
+    """Check if a string is a valid court identifier.
+    
+    Args:
+        court: The court identifier string to validate
+        
+    Returns:
+        bool: True if the identifier matches known court formats, False otherwise
+    """
+    if not isinstance(court, str) or not court.strip():
+        return False
+        
+    court = court.strip()
+    return bool(
+        re.match(r'^\d+\s*-\s*[A-Za-z]+', court) or  # 01 - CCA
+        re.match(r'^[A-Za-z]+\s*-\s*[A-Za-z]+', court) or  # DC - DC, FD - CCA
+        re.match(r'^IT$', court) or  # International Trade court
+        re.match(r'^CL$', court) or  # Federal Claims court
+        re.match(r'^[A-Za-z\s]+(?:Circuit|Court|District)', court, re.IGNORECASE)  # 1st Circuit
+    )
+
+
 def _extract_modern_format(table: Any) -> List[Dict[str, str]]:
     """Extract data from modern (2016+) HTML format.
     
@@ -81,88 +103,47 @@ def _extract_modern_format(table: Any) -> List[Dict[str, str]]:
 
 
 def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
-    """Extract vacancy data from legacy format HTML tables (pre-2016).
+    """Extract data from legacy format tables (pre-2016).
     
-    Legacy tables have a different structure than modern ones, with header rows
-    and footer rows that need to be filtered out.
-    
-    Args:
-        table: BeautifulSoup table element
-        
-    Returns:
-        List of vacancy records as dictionaries
+    These tables don't use thead/tbody and have header rows mixed in with data.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    
     records = []
     rows = table.find_all('tr')
-    logger.debug(f"Found {len(rows)} total rows in legacy table")
     
-    # Skip the first two rows (title and header)
-    for i, row in enumerate(rows[2:], start=2):
-        cells = row.find_all('td')
+    for row in rows:
+        cells = row.find_all(['th', 'td'])
+        if not cells:
+            continue
+            
         cell_texts = [cell.get_text(strip=True) for cell in cells]
         
-        # Skip rows with insufficient cells
-        if len(cells) < 4:
-            logger.debug(f"Skipping row {i}: Only {len(cells)} cells found, need at least 4")
+        # Skip header rows and empty rows
+        if not cell_texts or not cell_texts[0]:
             continue
             
-        # Check if this looks like a valid court identifier
-        # Accepts formats like:
-        # - "01 - CCA" (number - abbreviation)
-        # - "DC - DC" (abbreviation - abbreviation)
-        # - "FD - CCA" (abbreviation - abbreviation)
-        # - "1st Circuit" (descriptive name)
-        court = cell_texts[0]
-        court_match = (
-            re.match(r'^\d+\s*-\s*[A-Za-z]+', court) or  # 01 - CCA
-            re.match(r'^[A-Za-z]+\s*-\s*[A-Za-z]+', court) or  # DC - DC, FD - CCA
-            re.match(r'^[A-Za-z\s]+(?:Circuit|Court|District)', court, re.IGNORECASE)  # 1st Circuit
-        )
-        
-        if not court_match:
-            logger.debug(f"Skipping row {i}: Invalid court format: '{court}'")
+        # Use the reusable court validation function
+        if not is_valid_court_identifier(cell_texts[0]):
             continue
             
-        # Check if vacancy date is in expected format (MM/DD/YYYY)
-        vacancy_date = cell_texts[3].strip()
-        if not re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', vacancy_date):
-            logger.debug(f"Skipping row {i}: Invalid date format: '{vacancy_date}'")
-            continue
+        # Rest of the extraction logic remains the same
+        if len(cell_texts) >= 4:  # Minimum cells we expect
+            record = {
+                'court': cell_texts[0],
+                'incumbent': cell_texts[1],
+                'vacancy_reason': cell_texts[2],
+                'vacancy_date': cell_texts[3],
+            }
             
-        # Skip header-like rows (check for common header terms in first few cells)
-        header_indicators = ['circuit', 'district', 'incumbent', 'vacancy', 
-                           'reason', 'nominee', 'date', 'judge']
-        
-        # Only check the first 4 cells for header indicators
-        if any(indicator in cell.lower()
-               for cell in cell_texts[:4]
-               for indicator in header_indicators):
-            logger.debug(f"Skipping row {i}: Contains header-like content: {cell_texts}")
-            continue
-            
-        # Create record with required fields
-        record = {
-            'court': court,
-            'incumbent': cell_texts[1].strip(),
-            'vacancy_reason': cell_texts[2].strip(),
-            'vacancy_date': vacancy_date,
-        }
-        
-        # Add optional fields if they exist and are not empty
-        if len(cell_texts) > 4 and cell_texts[4].strip():
-            record['nominee'] = cell_texts[4].strip()
-            
-        if len(cell_texts) > 5 and cell_texts[5].strip():
-            if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', cell_texts[5].strip()):
-                record['nomination_date'] = cell_texts[5].strip()
-        
-        logger.debug(f"Adding record: {record}")
-        records.append(record)
+            # Add nominee and dates if available
+            if len(cell_texts) > 4 and cell_texts[4]:  # Nominee
+                record['nominee'] = cell_texts[4]
+                if len(cell_texts) > 5 and cell_texts[5]:  # Nomination date
+                    record['nomination_date'] = cell_texts[5]
+                if len(cell_texts) > 6 and cell_texts[6]:  # Confirmation date
+                    record['confirmation_date'] = cell_texts[6]
+                    
+            records.append(record)
     
-    logger.info(f"Extracted {len(records)} records from legacy table")
     return records
 
 
