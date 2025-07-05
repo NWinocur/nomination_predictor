@@ -22,7 +22,6 @@ import pandas as pd
 import typer
 
 from nomination_predictor.config import PROCESSED_DATA_DIR
-from nomination_predictor.web_utils import fetch_html, generate_or_fetch_archive_urls
 
 # Configure logging
 logging.basicConfig(
@@ -114,40 +113,6 @@ def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
         raise ParseError(f"Error parsing HTML table: {e}") from e
 
 
-def generate_month_links(year: int) -> List[Dict[str, Any]]:
-    """
-    Generate month links for a given year.
-    
-    The URLs follow a predictable pattern:
-    https://www.uscourts.gov//judges-judgeships/judicial-vacancies/archive-judicial-vacancies/YYYY/MM/vacancies
-
-    Args:
-        year: Year of the archive page
-
-    Returns:
-        List of dictionaries with keys:
-        - url: URL to the month's vacancy page
-        - month: two-digit number of the month as a string (single-digit months are zero-padded)
-        - year: 4-digit year of the archive page
-    """
-    try:
-        month_links = []
-        for i in range(1, 13):
-            month_num = f"{i:02d}"  # Zero-pad month number
-            url = f"/judges-judgeships/judicial-vacancies/archive-judicial-vacancies/{year}/{month_num}/vacancies"
-            
-            month_links.append({
-                'url': url,
-                'month': month_num,
-                'year': year
-            })
-        
-        return month_links
-        
-    except Exception as e:
-        raise ParseError(f"Error generating month links: {e}") from e
-
-
 def records_to_dataframe(records: List[Dict[str, Any]]) -> pd.DataFrame:
     """
     Convert a list of records to a pandas DataFrame.
@@ -205,6 +170,8 @@ def main(output_dir: Path = PROCESSED_DATA_DIR, output_filename: str = "judicial
         output_dir: Directory to save output files
         output_filename: Name of the output CSV file
     """
+    from nomination_predictor.web_utils import fetch_html, generate_or_fetch_archive_urls
+
     try:
         # Create output directory if it doesn't exist
         output_dir.mkdir(parents=True, exist_ok=True)

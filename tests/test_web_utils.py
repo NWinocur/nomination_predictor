@@ -8,9 +8,8 @@ import requests
 
 from nomination_predictor.web_utils import (
     FetchError,
-    ParseError,
-    extract_month_links,
     fetch_html,
+    generate_month_links,
     generate_or_fetch_archive_urls,
     validate_url,
 )
@@ -81,84 +80,74 @@ def fixtures_dir():
     return Path(__file__).parent / "fixtures"
 
 
-@pytest.fixture
-def year_archive_paths(fixtures_dir):
-    """Return a list of paths to year archive HTML files."""
-    pages_dir = fixtures_dir / "pages"
-    return list(pages_dir.glob("archive_*.html"))
+def test_generate_month_links_structure():
+    """Test the structure of generated month links."""
+    # Test with a specific year
+    year = 2025
+    month_links = generate_month_links(year)
+    
+    # Should return exactly 12 months
+    assert len(month_links) == 12, "Should generate links for all 12 months"
+    
+    # Should have all required fields in each link
+    for link in month_links:
+        assert 'url' in link, "Link should have 'url' field"
+        assert 'month' in link, "Link should have 'month' field"
+        assert 'year' in link, "Link should have 'year' field"
 
 
-def test_extract_month_links_with_real_fixtures(year_archive_paths):
-    """Test extraction of month links from real year archive pages."""
-    # Skip if no fixture files found
-    if not year_archive_paths:
-        pytest.skip("No year archive fixtures found. See readme for how to prep test fixtures.")
+def test_generate_month_links_month_format():
+    """Test the format of month values in generated links."""
+    year = 2025
+    month_links = generate_month_links(year)
+    
+    # Check month format (01-12) and uniqueness
+    months = set()
+    for link in month_links:
+        month = link['month']
+        assert month in [f"{i:02d}" for i in range(1, 13)], f"Invalid month format: {month}"
+        months.add(month)
+    
+    # Should have all 12 unique months
+    assert len(months) == 12, "Should have all 12 unique months"
 
-    for path in year_archive_paths:
-        html = path.read_text(encoding="utf-8")
+
+def test_generate_month_links_year_handling():
+    """Test that year is correctly handled in different formats."""
+    test_cases = [
+        2020,  # Recent past
+        2025,  # Current/future
+        2009,  # further past
+    ]
+    
+    for year in test_cases:
+        month_links = generate_month_links(year)
         
-        # Extract year from filename (e.g., archive_2024.html -> 2024)
-        year = int(path.stem.split('_')[-1])
+        # All years should match input year (as string)
+        assert all(link['year'] == str(year) for link in month_links), \
+            f"All years should match input year {year}"
         
-        try:
-            month_links = extract_month_links(html)
+        # URL should contain the correct year and month
+        first_link = month_links[0]
+        assert f"/{year}/" in first_link['url'], \
+            f"URL should contain the year {year}"
+        assert f"{first_link['month']}/vacancies" in first_link['url'], \
+            "URL should contain month and 'vacancies'"
+
+
+def test_generate_month_links_url_structure():
+    """Test the structure of generated URLs."""
+    year = 2025
+    month_links = generate_month_links(year)
+    
+    base_url = "/judges-judgeships/judicial-vacancies/archive-judicial-vacancies"
+    
+    for link in month_links:
+        # URL should start with the base path
+        assert link['url'].startswith(f"{base_url}/"), \
+            f"URL should start with {base_url}/"
             
-            # Basic validation of the results
-            assert isinstance(month_links, list)
-            
-            # For each month link, verify structure and content
-            for link in month_links:
-                assert "url" in link, f"Missing 'url' in link: {link}"
-                assert "month" in link, f"Missing 'month' in link: {link}"
-                assert "year" in link and link["year"] is None, f"Year should be None in link: {link}"
-                
-                # Verify month name is valid
-                assert link["month"].lower() in [
-                    'january', 'february', 'march', 'april', 'may', 'june',
-                    'july', 'august', 'september', 'october', 'november', 'december'
-                ], f"Invalid month name: {link['month']}"
-                
-                # Verify URL structure
-                assert link["url"].startswith(("/", "http://", "https://")), \
-                    f"URL should start with /, http://, or https://: {link['url']}"
-                
-                # Verify the URL contains the year
-                assert str(year) in link["url"], f"Year {year} not in URL: {link['url']}"
-                
-                # Verify the URL contains a month number (1-12)
-                month_num = [
-                    'january', 'february', 'march', 'april', 'may', 'june',
-                    'july', 'august', 'september', 'october', 'november', 'december'
-                ].index(link["month"].lower()) + 1
-                
-                # Split the URL path and get the segment containing the month number
-                # (second-to-last segment before the filename/query)
-                url_parts = link["url"].rstrip('/').split('/')
-                month_segment = url_parts[-2] if len(url_parts) > 1 else url_parts[-1]
-                
-                assert str(month_num) in month_segment, \
-                    f"Month number {month_num} not found in URL segment: {month_segment} (URL: {link['url']})"
-                
-        except Exception as e:
-            pytest.fail(f"Failed to process {path.name}: {str(e)}")
-
-
-def test_extract_month_links_invalid_html():
-    """Test extraction with invalid HTML."""
-    with pytest.raises(ParseError):
-        extract_month_links("<html><body>No table here</body></html>")
-
-
-def test_extract_month_links_missing_table():
-    """Test extraction when the expected table is missing."""
-    html = """
-    <html>
-        <body>
-            <div class="layout-content">
-                <p>No table here</p>
-            </div>
-        </body>
-    </html>
-    """
-    with pytest.raises(ParseError, match="Could not find the months table"):
-        extract_month_links(html)
+        # URL should contain year and month in the correct format
+        expected_suffix = f"{year}/{link['month']}/vacancies"
+        assert expected_suffix in link['url'], \
+            f"URL should contain {expected_suffix}"

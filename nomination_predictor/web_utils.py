@@ -9,8 +9,8 @@ from datetime import datetime
 import logging
 import time
 from typing import Any, Dict, List
+from unittest.mock import MagicMock, patch
 
-from bs4 import BeautifulSoup
 import requests
 
 # Configure logging
@@ -36,6 +36,102 @@ class ParseError(WebUtilsError):
     """Raised when there's an error parsing HTML content."""
     pass
 
+
+@patch("requests.get")
+def test_fetch_html_success(mock_get):
+    """Test successful HTML fetching."""
+    # Mock the response
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "<html>Test</html>"
+    mock_get.return_value = mock_response
+
+    # Test the function
+    result = fetch_html("http://example.com")
+    assert result == "<html>Test</html>"
+    mock_get.assert_called_once_with("http://example.com", timeout=30)
+
+
+@patch("requests.get")
+def test_fetch_html_retry_on_timeout(mock_get):
+    """Test fetch_html retries on timeout."""
+    # Mock responses: timeout once, then succeed
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "<html>Success</html>"
+
+    mock_get.side_effect = [requests.exceptions.Timeout("Connection timed out"), mock_response]
+
+    result = fetch_html("http://example.com", max_retries=2, retry_delay=0.1)
+    assert result == "<html>Success</html>"
+    assert mock_get.call_count == 2
+
+
+@patch("requests.get")
+def test_fetch_html_retry_on_connection_error(mock_get):
+    """Test fetch_html retries on connection error."""
+    # Mock responses: connection error once, then succeed
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "<html>Success</html>"
+
+    mock_get.side_effect = [
+        requests.exceptions.ConnectionError("Connection failed"),
+        mock_response,
+    ]
+
+    result = fetch_html("http://example.com", max_retries=2, retry_delay=0.1)
+    assert result == "<html>Success</html>"
+    assert mock_get.call_count == 2
+
+
+
+
+
+@patch("requests.get")
+def test_fetch_html_http_error_5xx(mock_get):
+    """Test fetch_html retries on 5xx errors."""
+    # Mock a 500 response that fails all retries
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+    mock_response.raise_for_status.side_effect = requests.HTTPError("500 Server Error")
+    mock_get.return_value = mock_response
+
+    with pytest.raises(FetchError, match="Failed to fetch"):
+        fetch_html("http://example.com/error", max_retries=2)
+
+    assert mock_get.call_count == 2
+
+
+@patch("requests.get")
+def test_fetch_html_rate_limit(mock_get):
+    """Test fetch_html handles 429 Too Many Requests with retry."""
+    # Mock a 429 response followed by success
+    error_response = MagicMock()
+    error_response.status_code = 429
+    error_response.raise_for_status.side_effect = requests.HTTPError("429 Too Many Requests")
+
+    success_response = MagicMock()
+    success_response.status_code = 200
+    success_response.text = "<html>Success</html>"
+
+    mock_get.side_effect = [error_response, success_response]
+
+    result = fetch_html("http://example.com", max_retries=2, retry_delay=0.1)
+    assert result == "<html>Success</html>"
+    assert mock_get.call_count == 2
+
+
+def test_fetch_html_invalid_retries():
+    """Test fetch_html validates max_retries parameter."""
+    with pytest.raises(ValueError, match="max_retries must be a positive integer"):
+        fetch_html("http://example.com", max_retries=0)
+
+    with pytest.raises(ValueError, match="max_retries must be a positive integer"):
+        fetch_html("http://example.com", max_retries=-1)
+
+    with pytest.raises(ValueError, match="max_retries must be a positive integer"):
+        fetch_html("http://example.com", max_retries="not-an-integer")
 
 def validate_url(url: str) -> bool:
     """
@@ -134,72 +230,97 @@ def generate_or_fetch_archive_urls() -> List[str]:
     return urls
 
 
-def extract_month_links(html: str) -> List[Dict[str, Any]]:
+def generate_month_links(year: int) -> List[Dict[str, Any]]:
     """
-    Generate month links based on the year from the provided HTML.
+    Generate month links for a given year.
     
-    The URL pattern for vacancy pages is predictable and follows this structure:
+    The URLs follow a predictable pattern:
     /judges-judgeships/judicial-vacancies/archive-judicial-vacancies/YYYY/MM/vacancies
-    
+
     Args:
-        html: HTML content of a year archive page (used to extract the year)
-        
+        year: Year of the archive page (as an integer, e.g., 2025)
+
     Returns:
         List of dictionaries with keys:
-        - emergencies_url: URL to the month's emergencies page
-        - vacancies_url: URL to the month's vacancies page
-        - confirmations_url: URL to the month's confirmations page
-        - month: Name of the month (casefolded for more consistent comparisons/matching)
+        - url: URL to the month's vacancy page
+        - month: two-digit number of the month as a string (single-digit months are zero-padded)
+        - year: 4-digit year of the archive page (as a string)
+
+    Raises:
+        ParseError: If there's an error generating the month links
     """
     try:
-        # Extract year from the HTML
-        soup = BeautifulSoup(html, "html.parser")
-        title = soup.find('title')
-        year = None
-        
-        # Try to extract year from title if available
-        if title and title.string:
-            # Look for a 4-digit year in the title
-            import re
-            year_match = re.search(r'\b(20\d{2})\b', title.string)
-            if year_match:
-                year = int(year_match.group(1))
-        
-        # If year not found in title, try to get it from the URL in the page
-        if year is None:
-            # Look for the current year in the archive links
-            year_links = soup.find_all('a', href=re.compile(r'archive-judicial-vacancies\?year=(\d{4})'))
-            if year_links:
-                # Get the first year link that looks like a year
-                for link in year_links:
-                    year_match = re.search(r'year=(\d{4})', link.get('href', ''))
-                    if year_match:
-                        year = int(year_match.group(1))
-                        break
-        
-        # If we still don't have a year, use the current year as a fallback
-        if year is None:
-            from datetime import datetime
-            year = datetime.now().year
-        
-        # Generate month links for the year
-        months = [
-            'January', 'February', 'March', 'April', 'May', 'June',
-            'July', 'August', 'September', 'October', 'November', 'December'
-        ]
-        
         month_links = []
-        for i, month in enumerate(months, 1):
+        for i in range(1, 13):
             month_num = f"{i:02d}"  # Zero-pad month number
             url = f"/judges-judgeships/judicial-vacancies/archive-judicial-vacancies/{year}/{month_num}/vacancies"
             
             month_links.append({
                 'url': url,
-                'month': month,
-                'year': year
+                'month': month_num,
+                'year': str(year)  # Convert year to string to match test expectations
             })
         
         return month_links
         
     except Exception as e:
         raise ParseError(f"Error generating month links: {e}") from e
+
+
+def test_generate_or_fetch_archive_urls():
+    """
+    Test URL generation for archive pages.
+
+    Verifies that:
+    1. Returns a list of strings
+    2. All URLs are valid HTTP/HTTPS URLs with the correct format
+    3. Covers years from 2009 to current year (inclusive)
+    4. Uses the correct query parameter format: ?year=YYYY
+    """
+    # Get the current year
+    current_year = datetime.now().year
+
+    # Generate the URLs
+    urls = generate_or_fetch_archive_urls()
+
+    # Basic type and format checks
+    assert isinstance(urls, list)
+    assert all(isinstance(url, str) for url in urls)
+    assert all(url.startswith(("http://", "https://")) for url in urls)
+
+    # Check year range (2009 to current year, inclusive)
+    years = []
+    for url in urls:
+        # Extract the year from the URL query parameter
+        try:
+            from urllib.parse import parse_qs, urlparse
+
+            parsed_url = urlparse(url)
+            year = int(parse_qs(parsed_url.query).get("year", [""])[0])
+            years.append(year)
+
+            # Verify the URL format
+            assert parsed_url.path.endswith("/archive-judicial-vacancies"), (
+                "URL path should end with '/archive-judicial-vacancies'"
+            )
+            assert "year=" in parsed_url.query, "URL should contain 'year' query parameter"
+
+        except (ValueError, IndexError, AssertionError) as e:
+            pytest.fail(f"Invalid URL format: {url}. Error: {e}")
+
+    # Should include all years from 2009 to current year
+    expected_years = list(range(2009, current_year + 1))
+    assert sorted(years) == expected_years, (
+        f"Expected years {expected_years[0]}-{expected_years[-1]}, got {min(years)}-{max(years)}"
+    )
+
+    # Verify URL format for a sample year
+    sample_year = 2020
+    assert any(f"year={sample_year}" in url for url in urls), (
+        f"Expected to find URL with '?year={sample_year}'"
+    )
+    
+    # TODO: ensure that this test case or a separate test case covers that the unit under test generates and/or fetches URLs for 2009 July and newer, i.e. months 07 and newer, excluding months 01 through 06.
+
+
+
