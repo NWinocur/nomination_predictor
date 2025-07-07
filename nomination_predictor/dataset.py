@@ -13,17 +13,15 @@ of data cleaning or feature creation to other code.
 """
 
 import logging
-import sys
 from pathlib import Path
+import sys
 from typing import Any, Dict, List, Union
 
 import pandas as pd
 import typer
 
 from nomination_predictor.config import PROCESSED_DATA_DIR
-from nomination_predictor.vacancy_scraper import (
-    extract_vacancy_table as extract_vacancy_table_from_scraper,
-)
+from nomination_predictor.vacancy_scraper import extract_vacancy_table
 
 # Configure logging
 logging.basicConfig(
@@ -47,24 +45,6 @@ class ParseError(Exception):
     pass
 
 
-def extract_vacancy_table(html: str) -> List[Dict[str, Any]]:
-    """
-    Extract judicial vacancy data from month-level HTML content.
-    
-    This is a thin wrapper around the extract_vacancy_table function from the vacancy_scraper module.
-    It's maintained here for backward compatibility.
-    
-    Args:
-        html: HTML content containing a table with judicial vacancy data
-
-    Returns:
-        List of dictionaries containing extracted data with standardized fields
-    """
-    try:
-        return extract_vacancy_table_from_scraper(html)
-    except Exception as e:
-        logger.error(f"Error extracting vacancy table: {e}")
-        raise ParseError(f"Failed to extract vacancy data: {e}") from e
 
 
 def records_to_dataframe(records: List[Dict[str, Any]]) -> pd.DataFrame:
@@ -151,7 +131,7 @@ def main(output_dir: Path = PROCESSED_DATA_DIR, output_filename: str = "judicial
         if all_records:
             df = records_to_dataframe(all_records)
             save_to_csv(df, output_path)
-            logger.success(f"Successfully processed {len(df)} records to {output_path}")
+            logger.info(f"Successfully processed {len(df)} records to {output_path}")
         else:
             logger.warning("No records were processed")
 
