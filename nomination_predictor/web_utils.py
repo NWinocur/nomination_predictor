@@ -49,7 +49,7 @@ def test_fetch_html_success(mock_get):
     # Test the function
     result = fetch_html("http://example.com")
     assert result == "<html>Test</html>"
-    mock_get.assert_called_once_with("http://example.com", timeout=30)
+    mock_get.assert_called_once_with("http://example.com", timeout=60)
 
 
 @patch("requests.get")
@@ -151,15 +151,15 @@ def validate_url(url: str) -> bool:
         return False
 
 
-def fetch_html(url: str, max_retries: int = 3, retry_delay: float = 1.0, timeout: int = 30) -> str:
+def fetch_html(url: str, max_retries: int = 2, retry_delay: float = 5.0, timeout: int = 60) -> str:
     """
     Fetch HTML content from a URL with retries and error handling.
 
     Args:
         url: URL to fetch
-        max_retries: Maximum number of retry attempts (must be >= 1)
-        retry_delay: Delay between retries in seconds
-        timeout: Request timeout in seconds (default: 30)
+        max_retries: Maximum number of retry attempts (must be >= 1, default: 2)
+        retry_delay: Base delay between retries in seconds (default: 5.0)
+        timeout: Request timeout in seconds (default: 60)
 
     Returns:
         str: HTML content as string
@@ -178,42 +178,39 @@ def fetch_html(url: str, max_retries: int = 3, retry_delay: float = 1.0, timeout
         raise ValidationError(f"Invalid URL: {url}")
 
     last_error = None
-    for attempt in range(max_retries):
+    for attempt in range(max_retries + 1):  # +1 for initial attempt
         try:
             response = requests.get(url, timeout=timeout)
             response.raise_for_status()
             return response.text
 
         except requests.Timeout as e:
-            last_error = f"Request timed out: {e}"
-            logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {last_error}")
+            last_error = f"Request timed out after {timeout}s: {e}"
+            logger.warning(f"Attempt {attempt + 1}/{max_retries + 1} failed: {last_error}")
         except requests.HTTPError as e:
-            status_code = getattr(e.response, "status_code", "unknown")
+            status_code = e.response.status_code if hasattr(e, 'response') else None
             last_error = f"HTTP error {status_code} occurred: {e}"
-            logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {last_error}")
-            # Don't retry on 4xx errors (except 429 Too Many Requests)
-            if isinstance(status_code, int) and 400 <= status_code < 500 and status_code != 429:
-                raise  # Re-raise the original HTTPError
+            logger.warning(f"Attempt {attempt + 1}/{max_retries + 1} failed: {last_error}")
+            # Don't retry on client errors (4xx) except 429 Too Many Requests
+            if status_code and 400 <= status_code < 500 and status_code != 429:
+                raise FetchError(f"Client error {status_code}: {e}") from e
         except requests.RequestException as e:
             last_error = f"Request failed: {e}"
-            logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {last_error}")
+            logger.warning(f"Attempt {attempt + 1}/{max_retries + 1} failed: {last_error}")
+        
+        # Don't sleep after the last attempt
+        if attempt < max_retries:
+            # Exponential backoff: 5s, 10s, 15s, etc.
+            delay = retry_delay * (attempt + 1)
+            logger.debug(f"Waiting {delay:.1f}s before retry...")
+            time.sleep(delay)
 
-        # If we get here, an exception occurred
-        if attempt < max_retries - 1:
-            sleep_time = retry_delay * (1 + attempt)  # Exponential backoff
-            logger.debug(f"Retrying in {sleep_time:.1f} seconds...")
-            time.sleep(sleep_time)
-        continue
-
-    # If we've exhausted all retries
-    error_msg = f"Failed to fetch {url} after {max_retries} attempts. Last error: {last_error}"
-    logger.error(error_msg)
-    raise FetchError(error_msg)
+    raise FetchError(f"Failed after {max_retries + 1} attempts. Last error: {last_error}")
 
 
 def generate_or_fetch_archive_urls() -> List[str]:
     """
-    Generate or fetch URLs for judicial vacancy archive pages.
+    Generate or fetch URLs for year-level judicial vacancy archive pages.
 
     Returns:
         List of archive page URLs from 2009 to the current year (inclusive)
@@ -230,35 +227,52 @@ def generate_or_fetch_archive_urls() -> List[str]:
     return urls
 
 
-def generate_month_links(year: int) -> List[Dict[str, Any]]:
+def generate_month_links(year: int, page_type: str = "vacancies") -> List[Dict[str, Any]]:
     """
-    Generate month links for a given year.
+    Generate month links for a given year and page type.
     
     The URLs follow a predictable pattern:
-    /judges-judgeships/judicial-vacancies/archive-judicial-vacancies/YYYY/MM/vacancies
+    /judges-judgeships/judicial-vacancies/archive-judicial-vacancies/YYYY/MM/{page_type}
 
     Args:
         year: Year of the archive page (as an integer, e.g., 2025)
+        page_type: Type of page to generate links for. Must be one of:
+                  - 'vacancies' (default)
+                  - 'confirmations'
+                  - 'emergencies'
 
     Returns:
         List of dictionaries with keys:
-        - url: URL to the month's vacancy page
+        - url: URL to the month's page
         - month: two-digit number of the month as a string (single-digit months are zero-padded)
         - year: 4-digit year of the archive page (as a string)
+        - page_type: the type of page (same as the input parameter)
 
     Raises:
+        ValueError: If an invalid page_type is provided
         ParseError: If there's an error generating the month links
     """
+    # Validate page_type
+    valid_page_types = ["vacancies", "confirmations", "emergencies"]
+    if page_type not in valid_page_types:
+        raise ValueError(
+            f"Invalid page_type: {page_type}. Must be one of {valid_page_types}"
+        )
+    
     try:
         month_links = []
         for i in range(1, 13):
             month_num = f"{i:02d}"  # Zero-pad month number
-            url = f"/judges-judgeships/judicial-vacancies/archive-judicial-vacancies/{year}/{month_num}/vacancies"
+            url = (
+                f"/judges-judgeships/judicial-vacancies/"
+                f"archive-judicial-vacancies/{year}/{month_num}/{page_type}"
+            )
             
             month_links.append({
                 'url': url,
                 'month': month_num,
-                'year': str(year)  # Convert year to string to match test expectations
+                'year': str(year),  # Convert year to string to match test expectations
+                'page_type': page_type
             })
         
         return month_links
@@ -321,6 +335,3 @@ def test_generate_or_fetch_archive_urls():
     )
     
     # TODO: ensure that this test case or a separate test case covers that the unit under test generates and/or fetches URLs for 2009 July and newer, i.e. months 07 and newer, excluding months 01 through 06.
-
-
-

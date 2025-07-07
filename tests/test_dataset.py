@@ -27,17 +27,18 @@ def validate_vacancy_record(record: Dict[str, Any]) -> None:
     """
     assert isinstance(record, dict), "Record should be a dictionary"
     
-    # Required fields
-    required_fields = ['court', 'vacancy_date', 'vacancy_reason']
-    for field in required_fields:
-        assert field in record, f"Missing required field: {field}"
-    
-    # Check field types
+    # Define required fields and their expected types
     required_field_types = {
         'court': str,
-        'vacancy_date': str,
+        'vacancy_date': str, # directly from our Internet-hosted data ource this is presented to us as a string.  Conversion to datetime can happen during data cleaning & transformations.
         'vacancy_reason': str,
     }
+    
+    # Check required fields exist and have correct types
+    for field, field_type in required_field_types.items():
+        assert field in record, f"Missing required field: {field}"
+        assert isinstance(record[field], field_type), \
+            f"Field '{field}' has incorrect type. Expected {field_type}, got {type(record[field])}"
     
     # Optional fields (may be missing or empty)
     optional_fields = {
@@ -110,15 +111,15 @@ def test_records_to_dataframe(sample_dataframe):
 
 
 def test_save_to_csv(tmp_path, sample_dataframe):
-    """Test saving DataFrame to CSV."""
+    """Test saving DataFrame to CSV with pipe delimiter."""
     test_file = tmp_path / "test_output.csv"
 
     # Test successful save
     save_to_csv(sample_dataframe, test_file)
     assert test_file.exists()
 
-    # Verify content
-    df = pd.read_csv(test_file)
+    # Verify content with pipe delimiter
+    df = pd.read_csv(test_file, sep='|')
     assert len(df) == 2
     assert list(df.columns) == ["seat", "court", "vacancy_date"]
 

@@ -81,22 +81,31 @@ def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
     
     These tables don't use thead/tbody and have header rows mixed in with data.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.debug("Starting extraction of legacy format table")
+    
     records = []
     rows = table.find_all('tr')
+    logger.debug(f"Found {len(rows)} rows in table")
     
-    for row in rows:
+    for i, row in enumerate(rows, 1):
         cells = row.find_all(['th', 'td'])
         if not cells:
+            logger.debug(f"Row {i}: No cells found, skipping")
             continue
             
         cell_texts = [cell.get_text(strip=True) for cell in cells]
+        logger.debug(f"Row {i} cell texts: {cell_texts}")
         
         # Skip header rows and empty rows
         if not cell_texts or not cell_texts[0]:
+            logger.debug(f"Row {i}: Empty first cell, skipping")
             continue
             
         # Use the reusable court validation function
         if not is_valid_court_identifier(cell_texts[0]):
+            logger.debug(f"Row {i}: Invalid court identifier: {cell_texts[0]}")
             continue
             
         # Minimum cells we expect
@@ -115,9 +124,13 @@ def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
                     record['nomination_date'] = cell_texts[5]
                 if len(cell_texts) > 6 and cell_texts[6]:  # Confirmation date
                     record['confirmation_date'] = cell_texts[6]
-                    
+            
+            logger.debug(f"Row {i}: Extracted record: {record}")
             records.append(record)
+        else:
+            logger.debug(f"Row {i}: Insufficient cells ({len(cell_texts)} < 4), skipping")
     
+    logger.info(f"Extracted {len(records)} records from legacy table")
     return records
 
 
@@ -133,12 +146,22 @@ def _detect_table_format(table: Any) -> str:
     Returns:
         str: 'legacy' or 'modern' based on table structure
     """
-    # Check for modern format indicators
-    if table.find('thead') or table.find('tbody'):
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Check for modern table structure
+    has_thead = table.find('thead') is not None
+    has_tbody = table.find('tbody') is not None
+    
+    logger.debug(f"Table structure - thead: {has_thead}, tbody: {has_tbody}")
+    
+    if has_thead and has_tbody:
+        logger.debug("Detected modern table format (has both thead and tbody)")
         return 'modern'
     
-    # Check for legacy format indicators by examining the first few rows
-    rows = table.find_all('tr', limit=5)  # Only check first 5 rows for efficiency
+    # Check for legacy table indicators
+    rows = table.find_all('tr', limit=5)  # Only check first few rows
+    logger.debug(f"Checking first {len(rows)} rows for legacy format indicators")
     
     # Common header patterns in legacy tables
     legacy_header_indicators = [
@@ -146,27 +169,36 @@ def _detect_table_format(table: Any) -> str:
         'nominee', 'date', 'judge', 'court'
     ]
     
-    for row in rows:
-        # Check for header cells with <strong> tags
-        strong_cells = row.find_all(['th', 'td'])
-        strong_texts = [cell.get_text(strip=True).lower() for cell in strong_cells]
+    for i, row in enumerate(rows, 1):
+        # Check for header cells with specific text
+        header_cells = row.find_all(['th', 'td'])
+        if not header_cells:
+            logger.debug(f"Row {i}: No header cells found")
+            continue
+            
+        # Get text from all cells in the row
+        cell_texts = [cell.get_text(strip=True).lower() for cell in header_cells]
+        logger.debug(f"Row {i} cell texts: {cell_texts}")
         
         # Count how many cells contain legacy header indicators
         matching_cells = sum(
-            1 for text in strong_texts 
+            1 for text in cell_texts 
             if any(indicator in text for indicator in legacy_header_indicators)
         )
         
         # If we find a row where most cells look like headers, it's likely a legacy table
-        if matching_cells >= 2 and len(strong_texts) > 0 and matching_cells / len(strong_texts) >= 0.5:
+        if matching_cells >= 2 and len(cell_texts) > 0 and matching_cells / len(cell_texts) >= 0.5:
+            logger.debug(f"Row {i}: Detected legacy format based on header patterns")
             return 'legacy'
             
-        # Also check for text directly in cells (without strong tags)
-        cell_texts = [cell.get_text(strip=True).lower() for cell in row.find_all(['th', 'td'])]
-        if any(indicator in cell for cell in cell_texts[:4] for indicator in legacy_header_indicators):
+        # Also check for bold text in first cell (common in legacy headers)
+        first_cell = header_cells[0]
+        if first_cell.find(['strong', 'b']):
+            logger.debug(f"Row {i}: Detected legacy format based on bold text in first cell")
             return 'legacy'
     
-    # Default to modern if we can't determine with high confidence
+    # Default to modern if no legacy indicators found
+    logger.debug("No legacy format indicators found, defaulting to modern format")
     return 'modern'
 
 
@@ -189,17 +221,31 @@ def extract_vacancy_table(html: str) -> List[Dict[str, str]]:
         - nomination_date: Date of nomination (if any)
         - confirmation_date: Date of confirmation (if any)
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     soup = BeautifulSoup(html, 'html.parser')
     table = soup.find('table')
     if not table:
+        logger.debug("No table found in HTML content")
         return []
+    
+    # Log first 500 chars of table HTML for debugging
+    table_html = str(table)[:500] + '...' if len(str(table)) > 500 else str(table)
+    logger.debug(f"Found table. First 500 chars: {table_html}")
     
     # Detect table format and extract data accordingly
     format_type = _detect_table_format(table)
+    logger.info(f"Detected table format: {format_type}")
+    
     if format_type == 'modern':
+        logger.debug("Extracting modern format table")
         records = _extract_modern_format(table)
     else:
+        logger.debug("Extracting legacy format table")
         records = _extract_legacy_format(table)
+    
+    logger.info(f"Extracted {len(records)} raw records")
     
     # Standardize field names
     field_mapping = {
@@ -216,11 +262,17 @@ def extract_vacancy_table(html: str) -> List[Dict[str, str]]:
     }
     
     standardized_records = []
-    for record in records:
-        standardized = {}
-        for old_key, value in record.items():
-            new_key = field_mapping.get(old_key.lower(), old_key)
-            standardized[new_key] = value.strip() if isinstance(value, str) else value
-        standardized_records.append(standardized)
+    for i, record in enumerate(records, 1):
+        try:
+            standardized = {}
+            for old_key, value in record.items():
+                new_key = field_mapping.get(old_key.lower(), old_key)
+                standardized[new_key] = value.strip() if isinstance(value, str) else value
+            standardized_records.append(standardized)
+            logger.debug(f"Processed record {i}: {standardized}")
+        except Exception as e:
+            logger.warning(f"Error processing record {i}: {e}")
+            continue
     
+    logger.info(f"Successfully processed {len(standardized_records)} records")
     return standardized_records

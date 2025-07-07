@@ -44,7 +44,7 @@ def test_fetch_html_success(mock_get):
     # Test the function
     result = fetch_html("http://example.com")
     assert result == "<html>Test</html>"
-    mock_get.assert_called_once_with("http://example.com", timeout=30)
+    mock_get.assert_called_once_with("http://example.com", timeout=60)
 
 
 @patch("requests.get")
@@ -55,7 +55,7 @@ def test_fetch_html_retry_on_timeout(mock_get):
     with pytest.raises(FetchError):
         fetch_html("http://example.com", max_retries=2)
     
-    assert mock_get.call_count == 2  # Initial + 1 retry
+    assert mock_get.call_count == 3
 
 
 def test_generate_or_fetch_archive_urls():
@@ -135,10 +135,15 @@ def test_generate_month_links_year_handling():
             "URL should contain month and 'vacancies'"
 
 
-def test_generate_month_links_url_structure():
-    """Test the structure of generated URLs."""
+@pytest.mark.parametrize("page_type,expected_suffix", [
+    ("vacancies", "vacancies"),
+    ("confirmations", "confirmations"),
+    ("emergencies", "emergencies"),
+])
+def test_generate_month_links_url_structure(page_type, expected_suffix):
+    """Test the structure of generated URLs for different page types."""
     year = 2025
-    month_links = generate_month_links(year)
+    month_links = generate_month_links(year, page_type=page_type)
     
     base_url = "/judges-judgeships/judicial-vacancies/archive-judicial-vacancies"
     
@@ -147,7 +152,24 @@ def test_generate_month_links_url_structure():
         assert link['url'].startswith(f"{base_url}/"), \
             f"URL should start with {base_url}/"
             
-        # URL should contain year and month in the correct format
-        expected_suffix = f"{year}/{link['month']}/vacancies"
-        assert expected_suffix in link['url'], \
-            f"URL should contain {expected_suffix}"
+        # URL should contain year, month, and the correct page type
+        expected_url_part = f"{year}/{link['month']}/{expected_suffix}"
+        assert expected_url_part in link['url'], \
+            f"URL should contain {expected_url_part}"
+
+
+def test_generate_month_links_default_page_type():
+    """Test that the default page type is 'vacancies'."""
+    year = 2025
+    month_links = generate_month_links(year)
+    
+    # Default should be 'vacancies'
+    for link in month_links:
+        assert "/vacancies" in link['url'], \
+            "Default page type should be 'vacancies'"
+
+
+def test_generate_month_links_invalid_page_type():
+    """Test that an invalid page type raises a ValueError."""
+    with pytest.raises(ValueError, match="Invalid page_type"):
+        generate_month_links(2025, page_type="invalid_type")
