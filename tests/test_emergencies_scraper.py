@@ -34,7 +34,7 @@ def validate_emergency_record(record: Dict[str, Any]) -> None:
     # Required fields - based on actual emergencies.html structure
     required_fields = [
         'circuit_district',
-        'vacancy_created_by_judge_name',
+        #'vacancy_created_by', # optional for newly-opened positions with no incumbent e.g. 2010 Jan 01 09 - CCA seat
         'reason',
         'vacancy_date',
         'days_pending',
@@ -50,7 +50,6 @@ def validate_emergency_record(record: Dict[str, Any]) -> None:
     # Check field types for required fields
     field_specs = {
         'circuit_district': (str,),
-        'vacancy_created_by_judge_name': (str,),
         'reason': (str,),
         'vacancy_date': (str,),
         'days_pending': (str, int)  # Can be either string or int
@@ -117,10 +116,9 @@ def test_extract_emergencies_table(year: int, month: str, expected_emergencies: 
     # Additional validation specific to the test case
     if year == 2010 and month == "01":
         # Check some known values from the 2010-01 data
-        ca9_record = next((r for r in records if r['circuit_district'] == '09 - CA'), None)
-        assert ca9_record is not None, "Expected to find CA-9 record"
-        assert ca9_record['vacancy_created_by_judge_name'], "Judge name should not be empty"
-        assert int(ca9_record['days_pending']) > 0, "Days pending should be positive"
+        cca9_record = next((r for r in records if r['circuit_district'] == '09 - CCA'), None)
+        assert cca9_record is not None, "Expected to find CCA-09 record"
+        assert int(cca9_record['days_pending']) > 0, "Days pending should be positive"
 
 
 def test_detect_table_format_modern():

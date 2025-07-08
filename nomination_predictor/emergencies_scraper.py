@@ -51,7 +51,7 @@ def _get_column_indices(header_row: Any) -> Dict[str, int]:
     field_mapping = {
         'circuit_district': ['circuit/district', 'circuit', 'district'],
         'title': ['title', 'position'],
-        'vacancy_judge': ['vacancy created by', 'judge', 'vacancy judge'],
+        'vacancy_created_by': ['vacancy created by', 'judge', 'vacancy judge'],
         'reason': ['reason'],
         'vacancy_date': ['vacancy date', 'date'],
         'days_pending': ['days pending', 'pending'],
@@ -102,7 +102,7 @@ def _extract_modern_format(table: Any) -> List[Dict[str, str]]:
                 record[field] = cells[idx]
         
         # Only add record if it has required fields
-        if all(field in record for field in ['circuit_district', 'title', 'vacancy_judge', 'vacancy_date']):
+        if all(field in record for field in ['circuit_district', 'title', 'vacancy_date']):
             records.append(record)
     
     return records
@@ -239,7 +239,7 @@ def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
                 record[field] = cells[idx]
         
         # Only add record if it has required fields
-        if all(field in record for field in ['circuit_district', 'title', 'vacancy_judge', 'vacancy_date']):
+        if all(field in record for field in ['circuit_district', 'title', 'vacancy_date']):
             records.append(record)
     
     logger.debug(f"Extracted {len(records)} records from legacy table")
