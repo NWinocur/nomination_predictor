@@ -120,37 +120,6 @@ def test_extract_emergencies_table(year: int, month: str, expected_emergencies: 
         assert cca9_record is not None, "Expected to find CCA-09 record"
         assert int(cca9_record['days_pending']) > 0, "Days pending should be positive"
 
-
-def test_detect_table_format_modern():
-    """Test that modern tables with thead/tbody (e.g. 2015 June and onwards) are correctly identified."""
-    html = """
-    <table>
-        <thead>
-            <tr><th>Circuit/District</th><th>Title</th></tr>
-        </thead>
-        <tbody>
-            <tr><td>01 - CCA</td><td>Circuit Judge</td></tr>
-        </tbody>
-    </table>
-    """
-    soup = BeautifulSoup(html, 'html.parser')
-    table = soup.find('table')
-    assert _detect_table_format(table) == 'modern'
-
-
-def test_detect_table_format_legacy():
-    """Test that legacy tables without thead/tbody (e.g. 2015 May and prior) are correctly identified."""
-    html = """
-    <table>
-        <tr><th>Circuit/District</th><th>Title</th></tr>
-        <tr><td>01 - CCA</td><td>Circuit Judge</td></tr>
-    </table>
-    """
-    soup = BeautifulSoup(html, 'html.parser')
-    table = soup.find('table')
-    assert _detect_table_format(table) == 'legacy'
-
-
 def test_detect_table_format_empty():
     """Test that empty tables default to modern format."""
     html = "<table></table>"
@@ -170,3 +139,36 @@ def test_is_valid_court_identifier():
     assert is_valid_court_identifier("Invalid") is False
     assert is_valid_court_identifier("") is False
     assert is_valid_court_identifier(None) is False
+
+
+def test_detect_table_format_2015_june_fixture():
+    """Test that the 2015 June fixture is correctly identified as modern format."""
+    html_content = get_pre_downloaded_emergencies_html_from(2015, '06')
+    soup = BeautifulSoup(html_content, 'html.parser')
+    table = soup.find('table', class_='usa-table')
+    
+    # The 2015-06 fixture should be detected as modern format
+    assert table is not None, "Table not found in 2015-06 fixture"
+    assert _detect_table_format(table) == 'modern', "2015-06 fixture should be detected as modern format"
+
+
+def test_detect_table_format_2015_jan_fixture():
+    """Test that the 2015 January fixture is correctly identified as legacy format."""
+    html_content = get_pre_downloaded_emergencies_html_from(2015, '01')
+    soup = BeautifulSoup(html_content, 'html.parser')
+    table = soup.find('table', class_='jdarevac')
+    
+    # The 2015-01 fixture should be detected as legacy format
+    assert table is not None, "Table not found in 2015-01 fixture"
+    assert _detect_table_format(table) == 'legacy', "2015-01 fixture should be detected as legacy format"
+
+
+def test_detect_table_format_2010_jan_fixture():
+    """Test that the 2010 January fixture is correctly identified as legacy format."""
+    html_content = get_pre_downloaded_emergencies_html_from(2010, '01')
+    soup = BeautifulSoup(html_content, 'html.parser')
+    table = soup.find('table')
+    
+    # The 2010-01 fixture should be detected as legacy format
+    assert table is not None, "Table not found in 2010-01 fixture"
+    assert _detect_table_format(table) == 'legacy', "2010-01 fixture should be detected as legacy format"

@@ -3,5 +3,14 @@
         "tests"
     ],
     "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true
+    "python.testing.pytestEnabled": true,
+    
+    // Tell cSpell which language-ids (file types) to check.
+    // Anything set to false is skipped.
+    "cSpell.enabledFileTypes": {
+      "md": true,   
+      "py": true,
+      "ipynb": true,
+      "csv": false
+    }
 }

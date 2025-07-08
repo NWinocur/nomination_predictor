@@ -102,7 +102,7 @@ def _extract_modern_format(table: Any) -> List[Dict[str, str]]:
                 record[field] = cells[idx]
         
         # Only add record if it has required fields
-        if all(field in record for field in ['circuit_district', 'title', 'vacancy_date']):
+        if all(field in record for field in ['circuit_district', 'vacancy_date', 'days_pending']):
             records.append(record)
     
     return records
@@ -139,29 +139,30 @@ def _is_header_row(cells: List[Any]) -> bool:
         ["circuit/district", "title", "vacancy created by", "reason"],
         ["court", "vacancy created by", "reason", "vacancy date"],
         ["circuit", "title", "judge", "reason", "vacancy date"],
+        ["circuit/district", "vacancy created by", "reason", "vacancy date"],  # 2015-01 pattern
     ]
     
     # Check for exact matches of header patterns
     for pattern in header_patterns:
         if len(cell_texts) >= len(pattern):
-            # Require exact matches for header patterns
+            # Check if the pattern matches at the start of the row
             if all(header == cell_texts[i].lower() 
                   for i, header in enumerate(pattern) if i < len(cell_texts)):
                 return True
     
-    # Check for the title row pattern separately
-    if len(cell_texts) >= 2 and \
+    # Handle title row pattern (e.g., "Judicial Emergencies" with a date)
+    if len(cell_texts) >= 3 and \
        any(x in cell_texts[0].lower() for x in ['judicial emergencies', 'emergencies as of']):
         return True
     
-    # Check for header-like structure with more strict conditions
+    # Check for header-like structure with strong tags
     strong_cells = 0
     strong_texts = []
     
     for cell in cells:
         if hasattr(cell, 'find'):
             strong = cell.find('strong')
-            if strong is not None and strong != -1:  
+            if strong is not None and strong != -1:  # Check for both None and -1
                 strong_cells += 1
                 strong_texts.append(strong.get_text(strip=True).lower())
     
@@ -170,7 +171,8 @@ def _is_header_row(cells: List[Any]) -> bool:
         # Count how many strong texts look like actual headers
         header_indicators = [
             'circuit', 'district', 'title', 'judge', 'vacancy', 
-            'reason', 'date', 'days', 'pending', 'weighted', 'adjusted'
+            'reason', 'date', 'days', 'pending', 'weighted', 'adjusted',
+            'filing', 'judgeship', 'panel'  # Added more indicators
         ]
         header_like = sum(
             any(indicator in text for indicator in header_indicators)
@@ -239,7 +241,7 @@ def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
                 record[field] = cells[idx]
         
         # Only add record if it has required fields
-        if all(field in record for field in ['circuit_district', 'title', 'vacancy_date']):
+        if all(field in record for field in ['circuit_district', 'vacancy_date', 'days_pending']):
             records.append(record)
     
     logger.debug(f"Extracted {len(records)} records from legacy table")
