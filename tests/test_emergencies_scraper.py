@@ -34,10 +34,12 @@ def validate_emergency_record(record: Dict[str, Any]) -> None:
     # Required fields - based on actual emergencies.html structure
     required_fields = [
         'circuit_district',
-        'title',
-        'vacancy_judge',
+        'vacancy_created_by_judge_name',
+        'reason',
         'vacancy_date',
-        'days_pending'
+        'days_pending',
+        #'weighted_filings_per_judgeship', # optional
+        #'adjusted_filings_per_panel' # optional
     ]
     
     # Check required fields exist
@@ -48,8 +50,8 @@ def validate_emergency_record(record: Dict[str, Any]) -> None:
     # Check field types for required fields
     for field, field_type in {
         'circuit_district': str,
-        'title': str,
-        'vacancy_judge': str,
+        'vacancy_created_by_judge_name': str,
+        'reason': str,
         'vacancy_date': str,
         'days_pending': (str, int)  # Can be either string or int
     }.items():
@@ -58,9 +60,8 @@ def validate_emergency_record(record: Dict[str, Any]) -> None:
     
     # Optional fields (may be missing or empty)
     optional_fields = {
-        'reason': str,
-        'weighted': str,
-        'adjusted': str,
+        'weighted_filings_per_judgeship': str,
+        'adjusted_filings_per_panel': str,
     }
     
     # Check optional fields if they exist
@@ -78,14 +79,17 @@ def fixtures_dir() -> Path:
 
 # Test cases for emergency table extraction
 # Format: (year, month, expected_emergencies)
-EMERGENCY_TEST_CASES = [
-    # January 2010 has 33 emergency declarations
+JUDICIAL_EMERGENCY_QUANTITIES = [
     (2010, "01", 33),
-    # Add more test cases as needed
+    (2015, "01", 12),
+    (2015, "03", 21),
+    (2015, "06", 24),
+    (2024, "09", 22),
+    (2024, "06", 24),
 ]
 
 
-@pytest.mark.parametrize("year,month,expected_emergencies", EMERGENCY_TEST_CASES)
+@pytest.mark.parametrize("year,month,expected_emergencies", JUDICIAL_EMERGENCY_QUANTITIES)
 def test_extract_emergencies_table(year: int, month: str, expected_emergencies: int) -> None:
     """Test extraction of emergency declaration data from HTML using real fixtures."""
     # Get the HTML content from fixtures
@@ -108,12 +112,12 @@ def test_extract_emergencies_table(year: int, month: str, expected_emergencies: 
         # Check some known values from the 2010-01 data
         ca9_record = next((r for r in records if r['circuit_district'] == '09 - CA'), None)
         assert ca9_record is not None, "Expected to find CA-9 record"
-        assert ca9_record['title'] == 'Circuit Judge', "Incorrect title for CA-9"
+        assert ca9_record['vacancy_created_by_judge_name'], "Judge name should not be empty"
         assert int(ca9_record['days_pending']) > 0, "Days pending should be positive"
 
 
 def test_detect_table_format_modern():
-    """Test that modern tables with thead/tbody are correctly identified."""
+    """Test that modern tables with thead/tbody (e.g. 2015 June and onwards) are correctly identified."""
     html = """
     <table>
         <thead>
@@ -130,7 +134,7 @@ def test_detect_table_format_modern():
 
 
 def test_detect_table_format_legacy():
-    """Test that legacy tables without thead/tbody are correctly identified."""
+    """Test that legacy tables without thead/tbody (e.g. 2015 May and prior) are correctly identified."""
     html = """
     <table>
         <tr><th>Circuit/District</th><th>Title</th></tr>

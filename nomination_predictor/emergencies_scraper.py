@@ -173,8 +173,8 @@ def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
 def _detect_table_format(table: Any) -> str:
     """Detect the format of the table (modern or legacy).
     
-    Modern tables typically have <thead> and <tbody> sections, while legacy tables
-    have header rows with specific text patterns.
+    Modern tables (2016+) use <thead> and <tbody> sections with specific classes.
+    Legacy tables (pre-2016) use simple table structure without these sections.
     
     Args:
         table: BeautifulSoup table element
@@ -185,19 +185,26 @@ def _detect_table_format(table: Any) -> str:
     if not table:
         return 'modern'  # Default to modern for empty tables
     
-    # Check for modern table structure
+    # Check for modern table structure (2020+)
     if table.find('thead') and table.find('tbody'):
-        return 'modern'
+        # Additional check for modern table classes to be sure
+        if 'usa-table' in table.get('class', []) or 'views-table' in table.get('class', []):
+            return 'modern'
     
-    # Check for legacy table structure
-    rows = table.find_all('tr', recursive=False)
-    if not rows:
-        return 'modern'  # Default to modern for empty tables
-    
-    # Check first few rows for header-like content
-    for row in rows[:min(3, len(rows))]:
-        cells = [cell.get_text(strip=True) for cell in row.find_all(['td', 'th'])]
-        if _is_header_row(cells):
+    # Check for legacy table structure (pre-2020)
+    # Look for specific patterns in the first few rows
+    rows = table.find_all('tr', recursive=False, limit=5)  # Only check first few rows
+    for row in rows:
+        # Look for header-like content in cells
+        cells = row.find_all(['td', 'th'])
+        if not cells:
+            continue
+            
+        # Check for common legacy header patterns
+        text = ' '.join(cell.get_text(strip=True) for cell in cells).lower()
+        if any(term in text for term in [
+            'circuit/district', 'vacancy created by', 'vacancy date', 'days pending'
+        ]):
             return 'legacy'
     
     # Default to modern if we can't determine
