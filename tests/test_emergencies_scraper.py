@@ -48,15 +48,22 @@ def validate_emergency_record(record: Dict[str, Any]) -> None:
         assert record[field] is not None, f"Required field '{field}' should not be None"
     
     # Check field types for required fields
-    for field, field_type in {
-        'circuit_district': str,
-        'vacancy_created_by_judge_name': str,
-        'reason': str,
-        'vacancy_date': str,
+    field_specs = {
+        'circuit_district': (str,),
+        'vacancy_created_by_judge_name': (str,),
+        'reason': (str,),
+        'vacancy_date': (str,),
         'days_pending': (str, int)  # Can be either string or int
-    }.items():
-        assert isinstance(record[field], field_type), \
-            f"Field '{field}' should be {field_type.__name__}, got {type(record[field]).__name__}"
+    }
+    
+    for field, valid_types in field_specs.items():
+        value = record[field]
+        if not isinstance(value, valid_types):
+            type_names = [t.__name__ for t in valid_types]
+            raise AssertionError(
+                f"Field '{field}' should be {' or '.join(type_names)}, "
+                f"got {type(value).__name__} with value: {value!r}"
+            )
     
     # Optional fields (may be missing or empty)
     optional_fields = {

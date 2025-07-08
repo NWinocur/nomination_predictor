@@ -10,6 +10,7 @@ import re
 from typing import Any, Dict, List
 
 from bs4 import BeautifulSoup
+from loguru import logger
 
 
 def is_valid_court_identifier(court: str) -> bool:
@@ -114,15 +115,72 @@ def _is_valid_date(date_str: str) -> bool:
     return bool(re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', date_str.strip()))
 
 
-def _is_header_row(cells: List[str]) -> bool:
-    """Check if a row appears to be a header row based on cell contents."""
+def _is_header_row(cells: List[Any]) -> bool:
+    """Check if a row appears to be a header row based on cell contents and structure.
+    
+    Args:
+        cells: List of BeautifulSoup cell elements (td/th)
+        
+    Returns:
+        bool: True if the row appears to be a header row
+    """
     if not cells or len(cells) < 3:
         return False
     
-    # Check for header-like content in first few cells
-    header_indicators = ['court', 'judge', 'date', 'declaration', 'termination']
-    first_cells = ' '.join(cell.lower() for cell in cells[:4] if cell)
-    return any(indicator in first_cells for indicator in header_indicators)
+    def get_cell_text(cell):
+        if hasattr(cell, 'get_text'):
+            return cell.get_text(strip=True).lower()
+        return str(cell).lower() if cell else ""
+    
+    cell_texts = [get_cell_text(cell) for cell in cells]
+    
+    # More specific header patterns that must match exactly
+    header_patterns = [
+        ["circuit/district", "title", "vacancy created by", "reason"],
+        ["court", "vacancy created by", "reason", "vacancy date"],
+        ["circuit", "title", "judge", "reason", "vacancy date"],
+    ]
+    
+    # Check for exact matches of header patterns
+    for pattern in header_patterns:
+        if len(cell_texts) >= len(pattern):
+            # Require exact matches for header patterns
+            if all(header == cell_texts[i].lower() 
+                  for i, header in enumerate(pattern) if i < len(cell_texts)):
+                return True
+    
+    # Check for the title row pattern separately
+    if len(cell_texts) >= 2 and \
+       any(x in cell_texts[0].lower() for x in ['judicial emergencies', 'emergencies as of']):
+        return True
+    
+    # Check for header-like structure with more strict conditions
+    strong_cells = 0
+    strong_texts = []
+    
+    for cell in cells:
+        if hasattr(cell, 'find'):
+            strong = cell.find('strong')
+            if strong is not None and strong != -1:  
+                strong_cells += 1
+                strong_texts.append(strong.get_text(strip=True).lower())
+    
+    # Require at least 3 strong cells with meaningful header text
+    if strong_cells >= 3:
+        # Count how many strong texts look like actual headers
+        header_indicators = [
+            'circuit', 'district', 'title', 'judge', 'vacancy', 
+            'reason', 'date', 'days', 'pending', 'weighted', 'adjusted'
+        ]
+        header_like = sum(
+            any(indicator in text for indicator in header_indicators)
+            for text in strong_texts
+        )
+        # Require at least 3 strong texts that look like headers
+        if header_like >= 3:
+            return True
+    
+    return False
 
 
 def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
@@ -130,30 +188,48 @@ def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
     
     These tables don't use thead/tbody and may have inconsistent formatting.
     """
+    logger.debug("Starting extraction of legacy format table")
     records = []
     rows = table.find_all('tr', recursive=False)
+    logger.debug(f"Found {len(rows)} total rows in table")
     
-    # Find the header row (usually the first non-empty row with header-like content)
+    def is_valid_header_row(cells: List[str]) -> bool:
+        """Check if this is a valid header row with column labels."""
+        if not cells or len(cells) < 5:  # Need enough columns to be a real header
+            return False
+            
+        # Look for specific header patterns that indicate column labels
+        header_indicators = [
+            'circuit/district', 'title', 'vacancy created by', 'reason',
+            'vacancy date', 'days pending', 'weighted', 'adjusted'
+        ]
+        
+        # Check if any cell contains multiple header indicators (strong sign of column headers)
+        cell_text = ' '.join(cell.lower() for cell in cells if cell)
+        return sum(indicator in cell_text for indicator in header_indicators) >= 3
+    
+    # Find the header row (skip title rows and look for actual column headers)
     header_row_idx = None
     for i, row in enumerate(rows):
         cells = [cell.get_text(strip=True) for cell in row.find_all(['td', 'th'])]
-        if _is_header_row(cells):
+        if _is_header_row(cells) and is_valid_header_row(cells):
             header_row_idx = i
+            logger.debug(f"Found valid header row at index {i}: {cells}")
             break
     
     if header_row_idx is None:
+        logger.warning("No valid header row found in legacy table")
         return []
     
-    # Get column indices from header row
+    # Extract column indices from the header row
     header_row = rows[header_row_idx]
     column_indices = _get_column_indices(header_row)
     
-    if not column_indices:
-        return []
-    
-    # Process data rows (rows after header)
+    # Process data rows (skip rows before and including the header row)
     for row in rows[header_row_idx + 1:]:
         cells = [cell.get_text(strip=True) for cell in row.find_all(['td', 'th'])]
+        
+        # Skip empty rows or rows that look like headers/footers
         if not cells or _is_header_row(cells):
             continue
             
@@ -162,11 +238,11 @@ def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
             if idx < len(cells):
                 record[field] = cells[idx]
         
-        # Only add record if it has required fields and valid court
-        if (all(field in record for field in ['circuit_district', 'title', 'vacancy_judge', 'vacancy_date']) and 
-            is_valid_court_identifier(record['circuit_district'])):
+        # Only add record if it has required fields
+        if all(field in record for field in ['circuit_district', 'title', 'vacancy_judge', 'vacancy_date']):
             records.append(record)
     
+    logger.debug(f"Extracted {len(records)} records from legacy table")
     return records
 
 
@@ -212,24 +288,10 @@ def _detect_table_format(table: Any) -> str:
 
 
 def extract_emergencies_table(html: str) -> List[Dict[str, str]]:
-    """
-    Extract judicial emergency declaration data from month-level HTML content.
-
-    Handles both older (pre-2016) and newer (2016+) HTML formats.
-
-    Args:
-        html: HTML content containing a table with judicial emergency data
-
-    Returns:
-        List of dictionaries containing extracted data with standardized fields:
-        - court: Name of the court/district
-        - emergency_judge: Name of the judge who declared the emergency
-        - emergency_declaration_date: Date when emergency was declared
-        - emergency_termination_date: Date when emergency was terminated (if applicable)
-        - emergency_extension: Information about any extensions (if applicable)
-        - notes: Additional notes about the emergency (if any)
-    """
+    """Extract judicial emergency declaration data from month-level HTML content."""
+    logger.debug("Starting extraction of emergencies table")
     if not html or not isinstance(html, str):
+        logger.warning("No HTML content provided")
         return []
     
     try:
@@ -237,17 +299,22 @@ def extract_emergencies_table(html: str) -> List[Dict[str, str]]:
         table = soup.find('table')
         
         if not table:
+            logger.warning("No table found in HTML")
             return []
         
         # Determine table format and extract data accordingly
         table_format = _detect_table_format(table)
+        logger.debug(f"Detected table format: {table_format}")
+        
         if table_format == 'modern':
-            return _extract_modern_format(table)
+            records = _extract_modern_format(table)
         else:
-            return _extract_legacy_format(table)
-            
+            records = _extract_legacy_format(table)
+        
+        logger.info(f"Extracted total of {len(records)} emergency records")
+        return records
+
     except Exception as e:
         # Log the error but don't fail the entire process
-        import logging
-        logging.exception(f"Error extracting emergency data: {e}")
+        logger.exception(f"Error extracting emergency data: {e}")
         return []
