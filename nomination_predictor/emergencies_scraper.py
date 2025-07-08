@@ -45,18 +45,28 @@ def _get_column_indices(header_row: Any) -> Dict[str, int]:
     Returns:
         Dictionary mapping field names to column indices
     """
-    headers = [th.get_text(strip=True).lower() for th in header_row.find_all(['th', 'td'])]
+    # Get all header cells, handling both th and td elements
+    header_cells = header_row.find_all(['th', 'td'])
+    
+    # Extract text from each header cell, handling nested elements and cleaning up whitespace
+    headers = []
+    for cell in header_cells:
+        # Get text content and clean it up
+        text = cell.get_text(' ', strip=True).lower()
+        # Remove any extra whitespace and normalize
+        text = ' '.join(text.split())
+        headers.append(text)
     
     # Map possible header names to our field names
     field_mapping = {
-        'circuit_district': ['circuit/district', 'circuit', 'district'],
+        'circuit_district': ['circuit/district', 'circuit', 'district', 'court'],
         'title': ['title', 'position'],
-        'vacancy_created_by': ['vacancy created by', 'judge', 'vacancy judge'],
+        'vacancy_created_by': ['vacancy created by', 'judge', 'vacancy judge', 'incumbent'],
         'reason': ['reason'],
-        'vacancy_date': ['vacancy date', 'date'],
-        'days_pending': ['days pending', 'pending'],
-        'weighted': ['weighted*', 'weighted'],
-        'adjusted': ['adjusted*', 'adjusted']
+        'vacancy_date': ['vacancy date', 'date', 'opening date'],
+        'days_pending': ['days pending', 'pending', 'days'],
+        'weighted': ['weighted*', 'weighted', 'weighted filings per judgeship*'],
+        'adjusted': ['adjusted*', 'adjusted', 'adjusted filings per panel*']
     }
     
     indices = {}
