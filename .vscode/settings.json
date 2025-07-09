@@ -12,5 +12,11 @@
       "py": true,
       "ipynb": true,
       "csv": false
-    }
+    },
+    "cSpell.words": [
+      "autoreload",
+      "ipython",
+      "pathlib",
+      "urlparse"
+    ]
 }
