@@ -74,7 +74,7 @@ def _extract_modern_format(table: Any) -> List[Dict[str, str]]:
     
     Modern tables use thead/tbody structure and have consistent column ordering.
     """
-    records = []
+    records: List[Dict[str, str]] = []
     
     # Find header row (usually in thead > tr > th)
     thead = table.find('thead')
@@ -156,7 +156,7 @@ def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
     These tables don't use thead/tbody and have header rows with <strong> tags.
     They also have a footer row with 'Total Confirmations' that needs to be skipped.
     """
-    records = []
+    records: List[Dict[str, str]] = []
     rows = table.find_all('tr')
     
     # Find the header row to determine where data starts

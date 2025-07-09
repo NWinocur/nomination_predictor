@@ -19,6 +19,7 @@ import typer
 
 from nomination_predictor.config import RAW_DATA_DIR
 from nomination_predictor.confirmations_scraper import extract_confirmations_table
+from nomination_predictor.emergencies_scraper import extract_emergencies_table
 from nomination_predictor.vacancy_scraper import extract_vacancy_table
 from nomination_predictor.web_utils import fetch_html, generate_month_links
 
@@ -133,8 +134,10 @@ def fetch_and_process_data(
                         records = extract_vacancy_table(html)
                     elif page_type == 'confirmations':
                         records = extract_confirmations_table(html)
-                    else:  # emergencies
-                        # TODO: Add emergencies scraper when implemented
+                    elif page_type == 'emergencies':
+                        records = extract_emergencies_table(html)
+                    else:
+                        logger.error(f"Invalid page type: {page_type}")
                         continue
                         
                     if records:
@@ -205,10 +208,12 @@ def main(
             dfs.append(confirmations_df)
             logger.info(f"Processed {len(confirmations_df)} confirmation records")
             
-        # TODO: Uncomment when emergencies scraper is implemented
-        # emergencies_df = fetch_and_process_data('emergencies', output_dir, current_year, years_back)
-        # if not emergencies_df.empty:
-        #     dfs.append(emergencies_df)
+        # Fetch and process emergencies
+        logger.info("Processing judicial emergency data...")
+        emergencies_df = fetch_and_process_data('emergencies', output_dir, current_year, years_back)
+        if not emergencies_df.empty:
+            dfs.append(emergencies_df)
+            logger.info(f"Processed {len(emergencies_df)} emergency records")
         
         # Combine all data
         if dfs:
@@ -223,6 +228,8 @@ def main(
                 save_to_csv(vacancies_df, output_dir / "judicial_vacancies.csv")
             if not confirmations_df.empty:
                 save_to_csv(confirmations_df, output_dir / "judicial_confirmations.csv")
+            if not emergencies_df.empty:
+                save_to_csv(emergencies_df, output_dir / "judicial_emergencies.csv")
                 
             return combined_df
         else:

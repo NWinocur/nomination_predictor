@@ -173,3 +173,35 @@ def test_generate_month_links_invalid_page_type():
     """Test that an invalid page type raises a ValueError."""
     with pytest.raises(ValueError, match="Invalid page_type"):
         generate_month_links(2025, page_type="invalid_type")
+
+
+def test_generate_month_links_2009():
+    """
+    Test that month links for 2009 only include July (07) through December (12).
+    
+    Verifies that:
+    1. For 2009, only months 07-12 are included
+    2. For other years, all months (01-12) are included
+    """
+    # Test with 2009 - should only return months 07-12
+    month_links_2009 = generate_month_links(2009, "vacancies")
+    months_2009 = {link['month'] for link in month_links_2009}
+    expected_months_2009 = {f"{m:02d}" for m in range(7, 13)}  # 07-12
+    assert months_2009 == expected_months_2009, \
+        f"For 2009, expected months {expected_months_2009}, got {months_2009}"
+    
+    # Test with 2010 - should return all months 01-12
+    month_links_2010 = generate_month_links(2010, "vacancies")
+    months_2010 = {link['month'] for link in month_links_2010}
+    expected_months_2010 = {f"{m:02d}" for m in range(1, 13)}  # 01-12
+    assert months_2010 == expected_months_2010, \
+        f"For 2010, expected months {expected_months_2010}, got {months_2010}"
+    
+    # Verify the URL format for a sample month
+    sample_month = month_links_2009[0]
+    assert sample_month['url'] == (
+        "/judges-judgeships/judicial-vacancies/archive-judicial-vacancies/2009/07/vacancies"
+    )
+    assert sample_month['month'] == '07'
+    assert sample_month['year'] == '2009'
+    assert sample_month['page_type'] == 'vacancies'

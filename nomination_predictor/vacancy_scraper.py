@@ -39,7 +39,7 @@ def _extract_modern_format(table: Any) -> List[Dict[str, str]]:
     
     Modern tables use thead/tbody structure and have consistent column ordering.
     """
-    records = []
+    records: List[Dict[str, str]] = []
     
     # Find all rows in the tbody (skip thead)
     tbody = table.find('tbody')
@@ -85,7 +85,7 @@ def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
     logger = logging.getLogger(__name__)
     logger.debug("Starting extraction of legacy format table")
     
-    records = []
+    records: List[Dict[str, str]] = []
     rows = table.find_all('tr')
     logger.debug(f"Found {len(rows)} rows in table")
     

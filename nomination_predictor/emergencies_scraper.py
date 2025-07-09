@@ -84,7 +84,7 @@ def _extract_modern_format(table: Any) -> List[Dict[str, str]]:
     
     Modern tables use thead/tbody structure and have consistent column ordering.
     """
-    records = []
+    records: List[Dict[str, str]] = []
     thead = table.find('thead')
     tbody = table.find('tbody')
     
@@ -116,14 +116,6 @@ def _extract_modern_format(table: Any) -> List[Dict[str, str]]:
             records.append(record)
     
     return records
-
-
-def _is_valid_date(date_str: str) -> bool:
-    """Check if a string is a valid date in MM/DD/YYYY format."""
-    if not date_str or not isinstance(date_str, str):
-        return False
-    return bool(re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', date_str.strip()))
-
 
 def _is_header_row(cells: List[Any]) -> bool:
     """Check if a row appears to be a header row based on cell contents and structure.
@@ -201,7 +193,7 @@ def _extract_legacy_format(table: Any) -> List[Dict[str, str]]:
     These tables don't use thead/tbody and may have inconsistent formatting.
     """
     logger.debug("Starting extraction of legacy format table")
-    records = []
+    records: List[Dict[str, str]] = []
     rows = table.find_all('tr', recursive=False)
     logger.debug(f"Found {len(rows)} total rows in table")
     
