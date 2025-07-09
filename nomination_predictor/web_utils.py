@@ -235,7 +235,7 @@ def generate_month_links(year: int, page_type: str = "vacancies") -> List[Dict[s
     /judges-judgeships/judicial-vacancies/archive-judicial-vacancies/YYYY/MM/{page_type}
 
     Args:
-        year: Year of the archive page (as an integer, e.g., 2025)
+        year: Year of the archive page (as an integer, e.g., 2025). Must be between 2009 and current year.
         page_type: Type of page to generate links for. Must be one of:
                   - 'vacancies' (default)
                   - 'confirmations'
@@ -247,11 +247,26 @@ def generate_month_links(year: int, page_type: str = "vacancies") -> List[Dict[s
         - month: two-digit number of the month as a string (single-digit months are zero-padded)
         - year: 4-digit year of the archive page (as a string)
         - page_type: the type of page (same as the input parameter)
+        
+        Returns empty list if year is outside valid range (2009 to current year)
 
     Raises:
         ValueError: If an invalid page_type is provided
         ParseError: If there's an error generating the month links
     """
+    from datetime import datetime
+    current_year = datetime.now().year
+    
+    # Check if year is outside valid range (2009 to current year)
+    if year < 2009 or year > current_year:
+        import warnings
+        warnings.warn(
+            f"Year {year} is outside the valid range (2009-{current_year}). "
+            "No links will be generated.",
+            UserWarning
+        )
+        return []
+    
     # Validate page_type
     valid_page_types = ["vacancies", "confirmations", "emergencies"]
     if page_type not in valid_page_types:
@@ -262,6 +277,7 @@ def generate_month_links(year: int, page_type: str = "vacancies") -> List[Dict[s
     try:
         month_links = []
         if year == 2009:
+            # For 2009, only include months July (7) through December (12)
             for i in range(7, 13):
                 month_num = f"{i:02d}"  # Zero-pad month number
                 url = (
@@ -272,10 +288,11 @@ def generate_month_links(year: int, page_type: str = "vacancies") -> List[Dict[s
                 month_links.append({
                     'url': url,
                     'month': month_num,
-                    'year': str(year),  # Convert year to string to match test expectations
+                    'year': str(year),
                     'page_type': page_type
                 })
         else:
+            # For all other valid years, include all 12 months
             for i in range(1, 13):
                 month_num = f"{i:02d}"  # Zero-pad month number
                 url = (
@@ -286,7 +303,7 @@ def generate_month_links(year: int, page_type: str = "vacancies") -> List[Dict[s
                 month_links.append({
                     'url': url,
                     'month': month_num,
-                    'year': str(year),  # Convert year to string to match test expectations
+                    'year': str(year),
                     'page_type': page_type
                 })
         
@@ -348,4 +365,3 @@ def test_generate_or_fetch_archive_urls():
     assert any(f"year={sample_year}" in url for url in urls), (
         f"Expected to find URL with '?year={sample_year}'"
     )
-

@@ -1,7 +1,9 @@
 """Tests for the web_utils module."""
 
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+import warnings
 
 import pytest
 import requests
@@ -113,26 +115,44 @@ def test_generate_month_links_month_format():
 
 
 def test_generate_month_links_year_handling():
-    """Test that year is correctly handled in different formats."""
-    test_cases = [
+    """Test that year is correctly handled in different formats and ranges."""
+    from datetime import datetime
+    current_year = datetime.now().year
+    
+    # Test valid years
+    valid_test_cases = [
         2020,  # Recent past
-        2025,  # Current/future
-        2009,  # further past
+        current_year,  # Current year
+        2009,  # First valid year
     ]
     
-    for year in test_cases:
-        month_links = generate_month_links(year)
-        
-        # All years should match input year (as string)
-        assert all(link['year'] == str(year) for link in month_links), \
-            f"All years should match input year {year}"
-        
-        # URL should contain the correct year and month
-        first_link = month_links[0]
-        assert f"/{year}/" in first_link['url'], \
-            f"URL should contain the year {year}"
-        assert f"{first_link['month']}/vacancies" in first_link['url'], \
-            "URL should contain month and 'vacancies'"
+    for year in valid_test_cases:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # Treat warnings as errors to catch unexpected ones
+            month_links = generate_month_links(year)
+            
+            # All years should match input year (as string)
+            assert all(link['year'] == str(year) for link in month_links), \
+                f"All years should match input year {year}"
+            
+            # URL should contain the correct year and month
+            first_link = month_links[0]
+            assert f"/{year}/" in first_link['url'], \
+                f"URL should contain the year {year}"
+            assert f"{first_link['month']}/vacancies" in first_link['url'], \
+                "URL should contain month and 'vacancies'"
+    
+    # Test invalid years (before 2009 and future years)
+    invalid_test_cases = [
+        2008,  # Before first valid year
+        1999,  # Far in the past
+        current_year + 1,  # Future year (beyond current year)
+    ]
+    
+    for year in invalid_test_cases:
+        with pytest.warns(UserWarning, match=f"Year {year} is outside the valid range"):
+            month_links = generate_month_links(year)
+            assert len(month_links) == 0, f"Expected no links for year {year}, but got {len(month_links)}"
 
 
 @pytest.mark.parametrize("page_type,expected_suffix", [
