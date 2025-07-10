@@ -67,33 +67,109 @@ def records_to_dataframe(records: List[Dict[str, Any]]) -> pd.DataFrame:
     return df
 
 
-def save_to_csv(df: pd.DataFrame, path: Union[str, Path]) -> None:
+def save_dataframe_to_csv(df: pd.DataFrame, filename_without_extension: str, output_dir: Path) -> None:
     """
-    Save a DataFrame to a CSV file using pipe (|) as the delimiter.
+    Save a DataFrame to a CSV file with error handling.
     
-    We use pipe as the delimiter because it's much less likely to appear in our data
-    than commas, dashes, or slashes, which are common in court names and dates.
-
     Args:
         df: DataFrame to save
-        path: Output file path
-
-    Raises:
-        DataPipelineError: If saving fails
+        filename_without_extension: Output filename (without .csv extension)
+        output_dir: Directory to save the file in
     """
     try:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(path, index=False, sep='|')
-        logger.info(f"Successfully saved data to {path} using pipe (|) delimiter")
+        output_path = output_dir / f"{filename_without_extension}.csv"
+        df.to_csv(output_path, index=False, sep='|')
+        logger.info(f"Successfully saved {len(df)} records to {output_path}")
     except Exception as e:
-        raise DataPipelineError(f"Failed to save CSV to {path}: {e}")
+        logger.error(f"Error saving {filename_without_extension}: {e}")
+        raise
 
 
-def fetch_and_process_data(
+def parse_circuit_court(court_str: str) -> tuple[int | None, str]:
+    """
+    Parse a circuit/court identifier string into its components.
+    
+    Args:
+        court_str: The court string to parse (e.g., "09 - CA-N", "DC - DC", "IT", "IT -")
+        
+    Returns:
+        A tuple of (circuit, court) where:
+        - circuit: The circuit number as an int, or None if not applicable
+        - court: The court/district identifier as a string
+        
+    Raises:
+        ValueError: If the input string cannot be parsed
+    """
+    if not court_str or not isinstance(court_str, str):
+        raise ValueError(f"Invalid court string: {court_str}")
+    
+    # Clean up the input string
+    court_str = court_str.strip()
+    
+    # Special cases for courts without circuits
+    special_courts: set[str] = {"IT", "CL", "SC", "FED", "DC"}
+    
+    # Check for special court code with trailing dash (e.g., "IT -")
+    for code in special_courts:
+        if court_str.startswith(f"{code} -"):
+            return None, code
+    
+    if court_str in special_courts:
+        return None, court_str
+    
+    # Handle the standard format: "NN - XX-YY" or "NN - XX"
+    parts: list[str] = court_str.split(' - ', 1)
+    if len(parts) != 2:
+        # If we can't split on ' - ', check if it's a special court
+        if court_str in special_courts:
+            return None, court_str
+        raise ValueError(f"Could not parse court string: {court_str}")
+    
+    circuit_part: str
+    court_part: str
+    circuit_part, court_part = (part.strip() for part in parts)
+    
+    # If the court part is empty after stripping, check if the circuit part is a special court
+    if not court_part and circuit_part in special_courts:
+        return None, circuit_part
+    
+    # Parse circuit number
+    try:
+        # Map special circuit codes to numeric values we defined in project's data dictionary
+        CIRCUIT_CODE_MAP: dict[str, int] = {
+            "DC": 12,   # DC Circuit
+            "FD": 13,   # Federal Circuit
+            "FED": 13,  # Federal Circuit
+            "IT": 13,   # International Trade Circuit
+            "CL": 13,   # Federal Claims Circuit
+            "SC": 13,   # Supreme Court Circuit
+            # can add other special codes as needed
+        }
+        
+        # Check if circuit_part is a special code
+        if circuit_part in CIRCUIT_CODE_MAP:
+            circuit = CIRCUIT_CODE_MAP[circuit_part]
+        else:
+            circuit = int(circuit_part)
+        
+        # Validate circuit number (1-11 for normal circuits, 12 for DC, 13 for FED/other special)
+        if not (1 <= circuit <= 13):
+            raise ValueError(f"Invalid circuit number: {circuit}")
+            
+    except (ValueError, TypeError) as e:
+        # If we can't parse as a circuit number, check if it's a special court code
+        if court_part in special_courts:
+            return None, court_part
+        if circuit_part in special_courts:
+            return None, circuit_part
+        raise ValueError(f"Invalid circuit number format: {circuit_part}") from e
+    
+    return circuit, court_part
+
+
+def fetch_data(
     page_type: str, 
-    output_dir: Path, 
-    current_year: int,
+    current_year: int = datetime.now().year,
     years_back: int = 15
 ) -> pd.DataFrame:
     """
@@ -101,7 +177,6 @@ def fetch_and_process_data(
     
     Args:
         page_type: Type of data to fetch ('vacancies', 'confirmations', or 'emergencies')
-        output_dir: Directory to save output files
         current_year: Current year for generating date ranges
         years_back: Number of years back to fetch data for
         
@@ -141,7 +216,7 @@ def fetch_and_process_data(
                         continue
                         
                     if records:
-                        # Add year and month to each record for tracking
+                        # Add year and month to each record for tracking when the report came from
                         for record in records:
                             record.update({
                                 'source_year': str(year),
@@ -196,21 +271,21 @@ def main(
         
         # Fetch and process vacancies
         logger.info("Processing vacancy data...")
-        vacancies_df = fetch_and_process_data('vacancies', output_dir, current_year, years_back)
+        vacancies_df = fetch_data('vacancies', current_year, years_back)
         if not vacancies_df.empty:
             dfs.append(vacancies_df)
             logger.info(f"Processed {len(vacancies_df)} vacancy records")
             
         # Fetch and process confirmations
         logger.info("Processing confirmation data...")
-        confirmations_df = fetch_and_process_data('confirmations', output_dir, current_year, years_back)
+        confirmations_df = fetch_data('confirmations', current_year, years_back)
         if not confirmations_df.empty:
             dfs.append(confirmations_df)
             logger.info(f"Processed {len(confirmations_df)} confirmation records")
             
         # Fetch and process emergencies
         logger.info("Processing judicial emergency data...")
-        emergencies_df = fetch_and_process_data('emergencies', output_dir, current_year, years_back)
+        emergencies_df = fetch_data('emergencies', current_year, years_back)
         if not emergencies_df.empty:
             dfs.append(emergencies_df)
             logger.info(f"Processed {len(emergencies_df)} emergency records")
@@ -220,16 +295,15 @@ def main(
             combined_df = pd.concat(dfs, ignore_index=True)
             
             # Save the combined data
-            save_to_csv(combined_df, output_path)
-            logger.info(f"Successfully saved {len(combined_df)} total records to {output_path}")
+            save_dataframe_to_csv(combined_df, output_path.stem, output_dir)
             
             # Also save individual datasets for reference
             if not vacancies_df.empty:
-                save_to_csv(vacancies_df, output_dir / "judicial_vacancies.csv")
+                save_dataframe_to_csv(vacancies_df, "judicial_vacancies", output_dir)
             if not confirmations_df.empty:
-                save_to_csv(confirmations_df, output_dir / "judicial_confirmations.csv")
+                save_dataframe_to_csv(confirmations_df, "judicial_confirmations", output_dir)
             if not emergencies_df.empty:
-                save_to_csv(emergencies_df, output_dir / "judicial_emergencies.csv")
+                save_dataframe_to_csv(emergencies_df, "judicial_emergencies", output_dir)
                 
             return combined_df
         else:
