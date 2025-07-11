@@ -163,6 +163,9 @@ def transform_nomination_data(nomination_data: Dict[str, Any], full_details: boo
     Returns:
         List of records in the project's format
     """
+    logger.debug(f"Transforming nomination data (full_details={full_details})")
+    logger.trace(f"Input data: {nomination_data}")
+    
     records = []
     
     # Basic nomination information
@@ -209,29 +212,45 @@ def transform_nomination_data(nomination_data: Dict[str, Any], full_details: boo
         records.append(base_record.copy())
     else:
         # Process each nominee
-        for nominee in nominees_data:
-            record = base_record.copy()
-            
-            # Nominee information
-            record["nominee"] = " ".join(filter(None, [
-                nominee.get("firstName", ""),
-                nominee.get("middleName", ""),
-                nominee.get("lastName", "")
-            ]))
-            record["state"] = nominee.get("state")
-            
-            # Position information
-            record["position"] = nominee.get("positionTitle", "")
-            record["organization"] = nominee.get("organization", "")
-            
-            # Extract circuit/court information from position title
-            circuit, court = parse_court_from_description(record["position"])
-            if circuit is not None:
-                record["circuit"] = circuit
-            if court is not None:
-                record["court"] = court
-            
-            records.append(record)
+        for i, nominee in enumerate(nominees_data, 1):
+            try:
+                logger.debug(f"Processing nominee {i}/{len(nominees_data)}")
+                record = base_record.copy()
+                
+                # Nominee information
+                first_name = nominee.get("firstName", "")
+                middle_name = nominee.get("middleName", "")
+                last_name = nominee.get("lastName", "")
+                full_name = " ".join(filter(None, [first_name, middle_name, last_name]))
+                
+                record["nominee"] = full_name
+                record["state"] = nominee.get("state")
+                
+                # Position information
+                position = nominee.get("positionTitle", "")
+                organization = nominee.get("organization", "")
+                record["position"] = position
+                record["organization"] = organization
+                
+                logger.debug(f"  Name: {full_name}")
+                logger.debug(f"  Position: {position} at {organization}")
+                
+                # Extract circuit/court information from position title
+                circuit, court = parse_court_from_description(position)
+                if circuit is not None:
+                    record["circuit"] = circuit
+                    logger.debug(f"  Extracted circuit: {circuit}")
+                if court is not None:
+                    record["court"] = court
+                    logger.debug(f"  Extracted court: {court}")
+                
+                records.append(record)
+                logger.debug(f"  Successfully processed nominee {i}")
+                
+            except Exception as e:
+                logger.error(f"Error processing nominee {i}: {str(e)}")
+                logger.debug(f"Problematic nominee data: {nominee}")
+                continue
     
     return records
 
@@ -249,7 +268,7 @@ class CongressAPIClient:
     def get_nominations(self, congress: int, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """Fetch nominations for a specific congress."""
         url = f"{self.BASE_URL}/nomination/{congress}"
-        default_params = {"api_key": self.api_key, "format": "json", "limit": 250}
+        default_params = {"api_key": self.api_key, "format": "json", "limit": 500}
         if params:
             default_params.update(params)
         
@@ -277,9 +296,32 @@ class CongressAPIClient:
         params = {"api_key": self.api_key, "format": "json"}
         
         logger.info(f"Fetching detail for nomination {nomination_number} ({congress}th Congress)")
-        response = requests.get(url_path, params=params)
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = requests.get(url_path, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Log basic info about the response
+            logger.debug(f"Received detail for nomination {nomination_number}")
+            logger.trace(f"Full detail response: {data}")
+            
+            # Log important fields for debugging
+            if 'nomination' in data and 'description' in data['nomination']:
+                logger.debug(f"Nomination description: {data['nomination']['description']}")
+            if 'nominees' in data and data['nominees']:
+                logger.debug(f"Found {len(data['nominees'])} nominees")
+                for i, nominee in enumerate(data['nominees'], 1):
+                    logger.debug(f"  Nominee {i}: {nominee.get('fullName', 'Unknown')} - {nominee.get('positionTitle', 'No position')}")
+            
+            return data
+            
+        except Exception as e:
+            logger.error(f"Error fetching detail for nomination {nomination_number}: {str(e)}")
+            logger.debug(f"URL: {url_path}")
+            logger.debug(f"Params: {params}")
+            if 'response' in locals() and hasattr(response, 'text'):
+                logger.debug(f"Response text: {response.text[:500]}...")
+            raise
 
     def get_nomination_actions(self, congress: int, nomination_number: int) -> Dict[str, Any]:
         """
@@ -312,7 +354,7 @@ class CongressAPIClient:
         Returns:
             List of judicial nominations in the project's format
         """
-        records = []
+        records: list[dict[str, Any]] = []
         logger.info(f"Fetching judicial nominations for Congress {congress}")
 
         params = {
