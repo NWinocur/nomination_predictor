@@ -14,9 +14,12 @@
       "csv": false
     },
     "cSpell.words": [
+      "AOUSC",
       "autoreload",
+      "crosswalking",
       "figsize",
       "ipython",
+      "nids",
       "pathlib",
       "urlparse"
     ]

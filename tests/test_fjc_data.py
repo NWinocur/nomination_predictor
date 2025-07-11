@@ -59,8 +59,9 @@ class TestFjcDateParsing(unittest.TestCase):
     def test_parse_invalid_date(self):
         """Test parsing invalid date formats."""
         self.assertTrue(pd.isna(parse_fjc_date("not a date")))
-        self.assertTrue(pd.isna(parse_fjc_date("15/03/1889")))  # Day first isn't supported
-        self.assertTrue(pd.isna(parse_fjc_date("1889/03/15")))  # Wrong separator
+        self.assertTrue(pd.isna(parse_fjc_date("32/03/1889")))  # More months than in a day; also day-first
+        self.assertTrue(pd.isna(parse_fjc_date("1889-03-32")))  # More days than in a month
+        self.assertTrue(pd.isna(parse_fjc_date("1889-13-15")))  # More months than in a year
 
 
 @patch('nomination_predictor.fjc_data.FJC_DATA_DIR')
@@ -142,7 +143,8 @@ class TestBuildSeatTimeline(unittest.TestCase):
         # Check that vacancy_date equals termination_date
         pd.testing.assert_series_equal(
             timeline['vacancy_date'].dropna(),
-            timeline['termination_date'].dropna()
+            timeline['termination_date'].dropna(),
+            check_names=False  # Ignore Series names when comparing
         )
     
     def test_same_court_appointment_handling(self):

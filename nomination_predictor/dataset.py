@@ -10,8 +10,8 @@ For data cleaning and transformation, see the data_cleaning.py and features.py m
 
 from datetime import datetime
 from pathlib import Path
-import sys
-from typing import Any, Dict, List, Optional, TypedDict, Union
+import re
+from typing import Any, Dict, List, Optional, TypedDict
 
 from loguru import logger
 import numpy as np
@@ -19,11 +19,7 @@ import pandas as pd
 import typer
 
 from nomination_predictor.config import RAW_DATA_DIR
-from nomination_predictor.confirmations_scraper import extract_confirmations_table
 from nomination_predictor.congress_api import CongressAPIClient
-from nomination_predictor.emergencies_scraper import extract_emergencies_table
-from nomination_predictor.vacancy_scraper import extract_vacancy_table
-from nomination_predictor.web_utils import fetch_html, generate_month_links
 
 app = typer.Typer()
 
@@ -215,58 +211,9 @@ def fetch_data(
     Returns:
         DataFrame containing the processed data
     """
-    all_records = []
+    logger.warning("Not yet reimplemented, returning empty dataframe")
 
-    logger.info(f"Fetching {page_type} data for {year}")
-
-    try:
-        month_links = generate_month_links(year, page_type=page_type)
-        logger.info(f"Processing {len(month_links)} months for {page_type} in {year}")
-
-        for link in month_links:
-            try:
-                # Skip future months in the current year
-                if year == datetime.now().year and int(link["month"]) > datetime.now().month:
-                    continue
-
-                full_url = f"https://www.uscourts.gov{link['url']}"
-                logger.debug(f"Fetching {full_url}")
-                html = fetch_html(full_url)
-
-                # Use the appropriate extractor based on page type
-                if page_type == "vacancies":
-                    records = extract_vacancy_table(html)
-                elif page_type == "confirmations":
-                    records = extract_confirmations_table(html)
-                elif page_type == "emergencies":
-                    records = extract_emergencies_table(html)
-                else:
-                    logger.error(f"Invalid page type: {page_type}")
-                    continue
-
-                if records:
-                    # Add year and month to each record for tracking when the report came from
-                    for record in records:
-                        record.update(
-                            {
-                                "source_year": str(year),
-                                "source_month": link["month"],
-                                "source_page_type": page_type,
-                            }
-                        )
-                    all_records.extend(records)
-                    logger.info(
-                        f"Processed {len(records)} {page_type} records from {year}-{link['month']}"
-                    )
-
-            except Exception as e:
-                logger.error(f"Error processing {link['url']}: {e}")
-                continue
-
-    except Exception as e:
-        logger.error(f"Error processing year {year} for {page_type}: {e}")
-
-    return pd.DataFrame(all_records) if all_records else pd.DataFrame()
+    return  pd.DataFrame()
 
 
 def fetch_data_from_congress_api(
@@ -291,26 +238,6 @@ def fetch_data_from_congress_api(
     records = client.get_judicial_nominations(congress)
     logger.info(f"Fetched {len(records)} judicial nominations from Congress.gov API for Congress {congress}")
     return records_to_dataframe(records)
-
-    for congress in range(current_congress, current_congress - congresses_back - 1, -1):
-        try:
-            logger.info(f"Fetching judicial nominations for {congress}th Congress")
-            congress_records = client.get_judicial_nominations(congress, congresses_back = congresses_back)
-            logger.info(f"Retrieved {len(congress_records)} judicial nomination records")
-            all_records.extend(congress_records)
-
-        except Exception as e:
-            logger.error(f"Error fetching data for {congress}th Congress: {e}")
-
-    if not all_records:
-        logger.warning("No judicial nomination records found")
-        return pd.DataFrame()
-
-    logger.success(
-        f"Successfully retrieved {len(all_records)} judicial nomination records across {congresses_back + 1} congresses"
-    )
-    return records_to_dataframe(all_records)
-
 
 class SchemaComparison(TypedDict):
     common_fields: List[str]

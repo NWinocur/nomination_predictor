@@ -4,13 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from bs4 import BeautifulSoup
 import pytest
-
-from nomination_predictor.confirmations_scraper import (
-    extract_confirmations_table,
-    is_valid_court_identifier,
-)
 
 
 def validate_confirmation_record(record: Dict[str, Any]) -> None:
@@ -78,35 +72,4 @@ def validate_confirmation_record(record: Dict[str, Any]) -> None:
 def fixtures_dir():
     """Return the path to the fixtures directory."""
     return Path(__file__).parent / "fixtures"
-
-
-@pytest.mark.parametrize("year,month,expected_confirmations", [
-    # Test different years with expected number of confirmations
-    # These values will need to be updated based on actual fixture data
-    (2010, "01", 10),
-    (2015, "06", 4),
-    (2020, "12", 149),
-])
-def test_extract_confirmations_table(year, month, expected_confirmations):
-    """Test extraction of confirmation data from HTML using real fixtures."""
-    try:
-        html_content = get_pre_downloaded_confirmations_html_from(year, month)
-    except FileNotFoundError:
-        pytest.skip(f"No HTML fixture available for confirmations in {month}/{year}")
-        return
-
-    records = extract_confirmations_table(html_content)
-    
-    # Check that we got the expected number of records
-    assert len(records) == expected_confirmations, \
-        f"Expected {expected_confirmations} confirmations for {month}/{year}, got {len(records)}"
-    
-    # Validate each record
-    for record in records:
-        validate_confirmation_record(record)
-        
-        # Additional validation specific to confirmations
-        assert is_valid_court_identifier(record['circuit_district']), \
-            f"Invalid court identifier: {record['circuit_district']}"
-
 

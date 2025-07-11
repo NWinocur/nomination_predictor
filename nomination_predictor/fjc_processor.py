@@ -6,28 +6,20 @@ It includes both programmatic interfaces and command-line functionality.
 """
 
 import argparse
-import os
-import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional, Tuple
 
 from loguru import logger
 import pandas as pd
 
-from nomination_predictor.config import (
-    EXTERNAL_DATA_DIR,
-    INTERIM_DATA_DIR,
-    RAW_DATA_DIR,
-    configure_logging
-)
+from nomination_predictor.config import configure_logging
 from nomination_predictor.fjc_data import (
     FJC_DATA_DIR,
     build_seat_timeline,
-    crosswalk_congress_api,
     get_predecessor_info,
     load_fjc_csv,
     load_judges_data,
-    parse_fjc_date
+    parse_fjc_date,
 )
 
 
@@ -63,29 +55,34 @@ def validate_data_files() -> bool:
     return True
 
 
-def test_date_parsing() -> None:
+def demonstrate_date_parsing() -> None:
     """
-    Test date parsing functionality with various formats.
+    Demonstrate date parsing functionality with various formats.
+    
+    NOTE: This is not a test function but a demonstration. Proper unit tests for 
+    parse_fjc_date exist in tests/test_fjc_data.py.
     
     This function demonstrates how the parse_fjc_date function handles
     different date formats commonly found in FJC data.
     """
-    logger.info("Testing date parsing functionality...")
+    logger.info("Demonstrating date parsing functionality...")
 
-    test_dates = [
+    test_dates_str = [
         "1889-03-15",  # Excel format
         "03/15/1889",  # CSV format
         "1/5/2000",    # Single digit month/day
         "",            # Empty
-        None,          # None
         "invalid",     # Invalid
     ]
+    
+    # Handle None separately to avoid type issues
+    logger.info(f"'None' -> {parse_fjc_date(None)}")
 
-    for date_str in test_dates:
+    for date_str in test_dates_str:
         parsed = parse_fjc_date(date_str)
         logger.info(f"'{date_str}' -> {parsed}")
 
-    logger.info("Date parsing test complete")
+    logger.info("Date parsing demonstration complete")
 
 
 def process_fjc_data(
@@ -219,8 +216,8 @@ def run_tests() -> None:
     """
     logger.info("Running FJC data processing tests")
     
-    # Test date parsing
-    test_date_parsing()
+    # Demonstrate date parsing (not a test)
+    demonstrate_date_parsing()
     
     # Test data file validation
     valid_files = validate_data_files()
@@ -231,7 +228,7 @@ def run_tests() -> None:
     # Test processing with validation mode
     logger.info("Testing data processing in validation mode")
     seat_timeline_df, judges_df, predecessor_df = process_fjc_data(
-        output_dir=INTERIM_DATA_DIR,
+        output_dir=FJC_DATA_DIR,
         validate_mode=True
     )
     
@@ -248,8 +245,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Process FJC data files")
     parser.add_argument("--validate", action="store_true", help="Run in validation mode")
     parser.add_argument("--test", action="store_true", help="Run tests instead of processing")
-    parser.add_argument("--output", default=str(INTERIM_DATA_DIR), 
-                        help=f"Output directory (default: {INTERIM_DATA_DIR})")
+    parser.add_argument("--output", default=str(FJC_DATA_DIR), 
+                        help=f"Output directory (default: {FJC_DATA_DIR})")
     
     args = parser.parse_args()
     

@@ -4,10 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from bs4 import BeautifulSoup
 import pytest
-
-from nomination_predictor.vacancy_scraper import _detect_table_format, extract_vacancy_table
 
 
 def validate_vacancy_record(record: Dict[str, Any]) -> None:
@@ -64,30 +61,6 @@ def fixtures_dir():
     return Path(__file__).parent / "fixtures"
 
 
-@pytest.mark.parametrize("year,month,expected_vacancies,expected_nominees_pending", [
-    # 2010: Legacy format with header rows and specific structure
-    (2010, "01", 101, 20),    # Contains a few entries from non-numbered circuits such as DC-DC
-    
-    # 2014: Transitional format with some legacy elements
-    (2014, "01", 92, 53),    # Contains two "Director" seats with no prior incumbent
-    
-    # 2015: Transitional period with International Trade court seats
-    (2015, "01", 43, 0),     # Includes three International Trade court seats (IT)
-    
-    # 2016-2017: Modern format with thead/tbody structure
-    (2016, "01", 75, 34),    # Modern format with consistent structure
-    (2017, "01", 112, 59),   # Modern format with higher vacancy count
-    
-    # 2018-2020: Modern format with various data patterns
-    (2018, "01", 148, 51),   # Modern format with more complex data
-    
-    # 2021-2025: Recent years with potential format changes
-    (2021, "01", 49, 26),    # Recent year with typical data
-    (2022, "01", 76, 25),    # Recent year with typical data
-    (2024, "01", 61, 25),    # Recent year with typical data
-    (2025, "01", 40, 0),     # Most recent available data
-])
-def test_extract_vacancy_table(year, month, expected_vacancies, expected_nominees_pending):
     """Test extraction of vacancy data from HTML using real fixtures from different years."""
     try:
         html_content = get_pre_downloaded_vacancies_html_from(year, month)
