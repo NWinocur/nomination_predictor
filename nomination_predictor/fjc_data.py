@@ -116,35 +116,40 @@ def build_seat_timeline(service_df: pd.DataFrame) -> pd.DataFrame:
     """
     logger.info("Building seat timeline table")
     
-    # Select and rename relevant columns
-    seat_timeline = service_df[['nid', 'seat_id', 'court', 
-                               'commission_date', 'termination_date',
-                               'termination_reason']].copy()
+    # Keep all columns from the original DataFrame - defer cleaning to later notebooks
+    seat_timeline = service_df.copy()
     
-    # Sort by seat_id and commission_date
-    seat_timeline = seat_timeline.sort_values(['seat_id', 'commission_date'])
+    # Check if the expected columns exist in the DataFrame
+    required_columns = [
+        'nid', 'Seat ID', 'Commission Date', 'Termination Date', 'Termination'
+    ]
+    missing_columns = [col for col in required_columns if col not in seat_timeline.columns]
+    if missing_columns:
+        raise ValueError(f"Missing required columns in service_df: {missing_columns}")
+    
+    # Sort by seat ID and commission date
+    seat_timeline = seat_timeline.sort_values(['Seat ID', 'Commission Date'])
     
     # Create vacancy date (same as termination_date for most cases)
-    seat_timeline['vacancy_date'] = seat_timeline['termination_date']
+    # Add as a new column without modifying original data
+    seat_timeline['vacancy_date'] = seat_timeline['Termination Date']
     
-    # Handle special case: "appointment to same court" shouldn't create vacancy
-    mask = seat_timeline['termination_reason'].str.contains(
-        'appointment to same court', case=False, na=False)
-    seat_timeline.loc[mask, 'vacancy_date'] = pd.NaT
+    # Note: We're deferring special-case handling (such as analyzing different termination reasons)
+    # to later data cleaning and analysis stages, not in this basic ingestion function
     
     # Check for termination date > next commission date (the Dec 2023 fix mentioned)
     # This requires looking at next row for each seat
-    seat_ids = seat_timeline['seat_id'].unique()
+    seat_ids = seat_timeline['Seat ID'].unique()
     
     for seat_id in seat_ids:
-        seat_rows = seat_timeline[seat_timeline['seat_id'] == seat_id]
+        seat_rows = seat_timeline[seat_timeline['Seat ID'] == seat_id]
         
         if len(seat_rows) <= 1:
             continue
         
         # Get commission dates and termination dates
-        commission_dates = seat_rows['commission_date'].tolist()
-        termination_dates = seat_rows['termination_date'].tolist()
+        commission_dates = seat_rows['Commission Date'].tolist()
+        termination_dates = seat_rows['Termination Date'].tolist()
         
         # Check and fix each termination date
         for i in range(len(seat_rows) - 1):
@@ -156,7 +161,9 @@ def build_seat_timeline(service_df: pd.DataFrame) -> pd.DataFrame:
                         f"Fixed termination date > successor commission for seat {seat_id}: "
                         f"{termination_dates[i]} > {commission_dates[i+1]}"
                     )
-                    seat_timeline.loc[idx, 'termination_date'] = commission_dates[i+1]
+                    # Update both termination date and vacancy date
+                    # Note: We're not changing the original Termination Date column,
+                    # just our derived vacancy_date column
                     seat_timeline.loc[idx, 'vacancy_date'] = commission_dates[i+1]
     
     return seat_timeline

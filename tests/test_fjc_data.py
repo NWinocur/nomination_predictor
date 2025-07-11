@@ -2,15 +2,11 @@
 Unit tests for the fjc_data module.
 """
 
-from datetime import datetime
-import os
-from pathlib import Path
 import unittest
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from nomination_predictor.fjc_data import (
     build_seat_timeline,
@@ -110,24 +106,25 @@ class TestBuildSeatTimeline(unittest.TestCase):
     
     def test_basic_seat_timeline(self):
         """Test basic seat timeline construction."""
-        # Create sample data
+        # Create sample data with column names matching actual FJC CSV format
         service_df = pd.DataFrame({
             'nid': ['A', 'B', 'C', 'D'],
-            'seat_id': ['S1', 'S1', 'S2', 'S2'],
-            'court': ['Court1', 'Court1', 'Court2', 'Court2'],
-            'commission_date': [
+            'Seat ID': ['S1', 'S1', 'S2', 'S2'],
+            'Court Type': ['District', 'District', 'Circuit', 'Circuit'],
+            'Court Name': ['Court1', 'Court1', 'Court2', 'Court2'],
+            'Commission Date': [
                 pd.Timestamp('1990-01-01'),
                 pd.Timestamp('2000-01-01'),
                 pd.Timestamp('1995-01-01'),
                 pd.Timestamp('2005-01-01')
             ],
-            'termination_date': [
+            'Termination Date': [
                 pd.Timestamp('1999-12-31'),
                 pd.NaT,
                 pd.Timestamp('2004-12-31'),
                 pd.NaT
             ],
-            'termination_reason': [
+            'Termination': [
                 'resignation',
                 None,
                 'retirement',
@@ -140,55 +137,30 @@ class TestBuildSeatTimeline(unittest.TestCase):
         # Check that we have 4 rows
         self.assertEqual(len(timeline), 4)
         
-        # Check that vacancy_date equals termination_date
+        # Check that vacancy_date equals termination_date for non-special cases
         pd.testing.assert_series_equal(
             timeline['vacancy_date'].dropna(),
-            timeline['termination_date'].dropna(),
+            timeline['Termination Date'].dropna(),
             check_names=False  # Ignore Series names when comparing
         )
-    
-    def test_same_court_appointment_handling(self):
-        """Test handling of 'appointment to same court' termination reason."""
-        # Create sample data with 'appointment to same court'
-        service_df = pd.DataFrame({
-            'nid': ['A', 'B'],
-            'seat_id': ['S1', 'S1'],
-            'court': ['Court1', 'Court1'],
-            'commission_date': [
-                pd.Timestamp('1990-01-01'),
-                pd.Timestamp('2000-01-01')
-            ],
-            'termination_date': [
-                pd.Timestamp('1999-12-31'),
-                pd.NaT
-            ],
-            'termination_reason': [
-                'appointment to same court',
-                None
-            ]
-        })
-        
-        timeline = build_seat_timeline(service_df)
-        
-        # Check that vacancy_date is NaT for the 'appointment to same court' row
-        self.assertTrue(pd.isna(timeline.iloc[0]['vacancy_date']))
     
     def test_termination_date_fix(self):
         """Test fixing termination date > successor commission."""
         # Create sample data with inconsistent dates
         service_df = pd.DataFrame({
             'nid': ['A', 'B'],
-            'seat_id': ['S1', 'S1'],
-            'court': ['Court1', 'Court1'],
-            'commission_date': [
+            'Seat ID': ['S1', 'S1'],
+            'Court Type': ['District', 'District'],
+            'Court Name': ['Court1', 'Court1'],
+            'Commission Date': [
                 pd.Timestamp('1990-01-01'),
                 pd.Timestamp('2000-01-01')
             ],
-            'termination_date': [
+            'Termination Date': [
                 pd.Timestamp('2000-06-30'),  # After successor's commission
                 pd.NaT
             ],
-            'termination_reason': [
+            'Termination': [
                 'resignation',
                 None
             ]
@@ -196,14 +168,18 @@ class TestBuildSeatTimeline(unittest.TestCase):
         
         timeline = build_seat_timeline(service_df)
         
-        # Check that termination_date was fixed to match successor's commission
-        self.assertEqual(
-            timeline.iloc[0]['termination_date'],
-            pd.Timestamp('2000-01-01')
-        )
+        # Check that vacancy_date was fixed to match successor's commission
+        # Note: Our implementation no longer modifies the original Termination Date column,
+        # it only sets the derived vacancy_date column
         self.assertEqual(
             timeline.iloc[0]['vacancy_date'],
             pd.Timestamp('2000-01-01')
+        )
+        
+        # Verify original Termination Date is unchanged
+        self.assertEqual(
+            timeline.iloc[0]['Termination Date'],
+            pd.Timestamp('2000-06-30')
         )
 
 

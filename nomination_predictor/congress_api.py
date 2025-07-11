@@ -9,108 +9,74 @@ from typing import Any, Dict, List, Optional, Tuple
 from loguru import logger
 import requests
 
+JUDICIAL_ORG_TOKENS = [
+    "the judiciary",                      # Article III, DC & territorial seats
+]
 
-def is_likely_judicial_summary(nomination: Dict[str, Any]) -> bool:
-    """
-    Quick check on summary data to determine if we should fetch full details.
-    This helps minimize API calls.
-    """
-    if not isinstance(nomination, dict):
+JUDICIAL_DESC_TOKENS = [
+    # Exact court names or common stems
+    "united states district judge",
+    "united states circuit judge",
+    "court of appeals",                   # covers “United States Court of Appeals…”
+    "district court",                     # fallback for shorter phrasing
+    "court of international trade",
+    "court of federal claims",
+    "court of appeals for the federal circuit",
+    "court of appeals for veterans",      # “…Veterans Claims” & “…Veterans Appeals”
+    "superior court of the district of columbia",
+    "district of columbia court of appeals",
+    "district court for the northern mariana islands",
+    # Generic judicial titles (last, broadest tier)
+    "associate justice",
+    "chief justice",
+    "judge",                              # captures “bankruptcy judge”, etc.
+    "justice",
+    "magistrate",
+]
+
+
+def is_likely_judicial_summary(nom: dict) -> bool:
+    if not isinstance(nom, dict):
         return False
-        
-    description = str(nomination.get("description", "")).lower()
-    organization = str(nomination.get("organization", "")).lower()
-    
-    # Keywords that suggest a judicial position
-    judicial_indicators = [
-        # Court types
-        'district court', 'circuit court', 'supreme court',
-        'court of appeals', 'court of international trade',
-        'tax court', 'claims court', 'court of federal claims',
-        'veterans claims', 'bankruptcy court',
-        # Position titles
-        'judge', 'justice', 'magistrate',
-        # Organization indicators
-        'judicial', 'judiciary', 'court'
-    ]
-    
-    return any(indicator in f"{description} {organization}" 
-              for indicator in judicial_indicators)
-    
-def is_judicial_nomination(nomination_data: Dict[str, Any]) -> bool:
-    """
-    Determine if a nomination is for a judicial position.
-    
-    Handles both summary and detailed nomination responses from the Congress.gov API.
-    
-    Args:
-        nomination_data: Nomination data from Congress.gov API, which could be:
-            - A summary response (from get_nominations)
-            - A detailed response (from get_nomination_detail)
-        
-    Returns:
-        bool: True if this appears to be a judicial nomination, False otherwise
-    """
-    if not isinstance(nomination_data, dict):
-        return False
-    
-    # Check top-level description
-    description = str(nomination_data.get("description", "")).lower()
-    
-    # Check position title from top level or within nominees
-    position_title = str(nomination_data.get("positionTitle", "")).lower()
-    organization = str(nomination_data.get("organization", "")).lower()
-    
-    # Check nominees if available
-    nominees = []
-    if "nominees" in nomination_data:
-        if isinstance(nomination_data["nominees"], dict) and "items" in nomination_data["nominees"]:
-            nominees = nomination_data["nominees"]["items"]
-        elif isinstance(nomination_data["nominees"], list):
-            nominees = nomination_data["nominees"]
-    elif "nominee" in nomination_data:  # Handle singular form if present
-        nominees = [nomination_data["nominee"]]
-    
-    # Judicial indicators - ordered by specificity
-    judicial_keywords = [
-        # Court types
-        'district court', 
-        'circuit court', 
-        'supreme court',
-        'court of appeals',
-        'international trade court',
-        'tax court',
-        'claims court',
-        'veterans claims',
-        # Position titles
-        'judge',
-        'justice',
-        'magistrate',
-        'bankruptcy judge',
-        # Organization indicators
-        'judicial',
-        'judiciary'
-    ]
-    
-    # Check description and top-level fields
-    text_to_check = f"{description} {position_title} {organization}".lower()
-    if any(keyword in text_to_check for keyword in judicial_keywords):
+
+    org  = str(nom.get("organization", "")).lower()
+    desc = str(nom.get("description",   "")).lower()
+
+    if any(tok in org for tok in JUDICIAL_ORG_TOKENS):
         return True
-    
-    # Check nominee-specific information
-    for nominee in nominees:
-        if not isinstance(nominee, dict):
-            continue
-            
-        # Check nominee's position title and organization
-        nom_position = str(nominee.get("positionTitle", "")).lower()
-        nom_org = str(nominee.get("organization", "")).lower()
-        nom_text = f"{nom_position} {nom_org}".lower()
-        
-        if any(keyword in nom_text for keyword in judicial_keywords):
-            return True
-    
-    return False
+
+    combo = f"{desc} {org}"
+    return any(tok in combo for tok in JUDICIAL_DESC_TOKENS)
+
+
+def is_judicial_nomination(nom: dict) -> bool:
+    if not isinstance(nom, dict):
+        return False
+
+    # 1️⃣ organization shortcut
+    org = str(nom.get("organization", "")).lower()
+    if any(tok in org for tok in JUDICIAL_ORG_TOKENS):
+        return True
+
+    # 2️⃣ aggregate text fields
+    txt = " ".join(
+        str(nom.get(k, "")).lower()
+        for k in ("description", "positionTitle", "latest_action_text")
+    )
+
+    # 3️⃣ nominee-level check (detail responses)
+    if "nominees" in nom:
+        items = (
+            nom["nominees"].get("items", [])
+            if isinstance(nom["nominees"], dict)
+            else nom["nominees"]
+        )
+        for n in items:
+            txt += " " + str(n.get("positionTitle", "")).lower()
+            txt += " " + str(n.get("organization",  "")).lower()
+
+    return any(tok in txt for tok in JUDICIAL_DESC_TOKENS)
+
 
 def parse_court_from_description(description: str) -> Tuple[Optional[int], Optional[str]]:
     """
@@ -301,19 +267,26 @@ class CongressAPIClient:
             response.raise_for_status()
             data = response.json()
             
+            # Extract the nomination from the nested response
+            nomination_data = data.get('nomination', {})
+            
             # Log basic info about the response
             logger.debug(f"Received detail for nomination {nomination_number}")
             logger.trace(f"Full detail response: {data}")
             
             # Log important fields for debugging
-            if 'nomination' in data and 'description' in data['nomination']:
-                logger.debug(f"Nomination description: {data['nomination']['description']}")
-            if 'nominees' in data and data['nominees']:
-                logger.debug(f"Found {len(data['nominees'])} nominees")
-                for i, nominee in enumerate(data['nominees'], 1):
-                    logger.debug(f"  Nominee {i}: {nominee.get('fullName', 'Unknown')} - {nominee.get('positionTitle', 'No position')}")
+            if 'description' in nomination_data:
+                logger.debug(f"Nomination description: {nomination_data['description']}")
             
-            return data
+            # Handle nominees data structure correctly
+            nominees_data = nomination_data.get('nominees', {})
+            if isinstance(nominees_data, dict) and 'items' in nominees_data:
+                nominees = nominees_data['items']
+                logger.debug(f"Found {len(nominees)} nominees")
+                for i, nominee in enumerate(nominees, 1):
+                    logger.debug(f"  Nominee {i}: {nominee.get('firstName', '')} {nominee.get('lastName', '')} - {nominee.get('positionTitle', 'No position')}")
+            
+            return nomination_data
             
         except Exception as e:
             logger.error(f"Error fetching detail for nomination {nomination_number}: {str(e)}")
