@@ -1,84 +1,115 @@
-# nomination_predictor/congress_api.py
 """Client for fetching judicial nomination data from Congress.gov API."""
 
 from datetime import datetime
 import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, urlparse
 
 from loguru import logger
 import requests
 
+# Tokens that strongly indicate a nomination is judicial when found in organization field
 JUDICIAL_ORG_TOKENS = [
-    "the judiciary",                      # Article III, DC & territorial seats
+    "the judiciary",
+    "judicial",
+    "courts",
+    "court of",
+    "supreme court",
+    "district court",
+    "circuit court",
+    "bankruptcy court",
+    "federal court",
+    "court of federal",
+    "court of appeals",
+    "court of claims",
+    "court of international",
+    "u.s. court"
 ]
 
+# Tokens that may indicate a judicial nomination when found in description/position/text fields
 JUDICIAL_DESC_TOKENS = [
-    # Exact court names or common stems
-    "united states district judge",
-    "united states circuit judge",
-    "court of appeals",                   # covers “United States Court of Appeals…”
-    "district court",                     # fallback for shorter phrasing
-    "court of international trade",
-    "court of federal claims",
-    "court of appeals for the federal circuit",
-    "court of appeals for veterans",      # “…Veterans Claims” & “…Veterans Appeals”
-    "superior court of the district of columbia",
-    "district of columbia court of appeals",
-    "district court for the northern mariana islands",
-    # Generic judicial titles (last, broadest tier)
-    "associate justice",
-    "chief justice",
-    "judge",                              # captures “bankruptcy judge”, etc.
+    "judge",
     "justice",
-    "magistrate",
+    "circuit",
+    "district",
+    "bankruptcy",
+    "judicial",
+    "judiciary",
+    "court",
+    "magistrate"
 ]
 
 
 def is_likely_judicial_summary(nom: dict) -> bool:
-    if not isinstance(nom, dict):
-        return False
-
-    org  = str(nom.get("organization", "")).lower()
-    desc = str(nom.get("description",   "")).lower()
-
-    if any(tok in org for tok in JUDICIAL_ORG_TOKENS):
-        return True
-
-    combo = f"{desc} {org}"
-    return any(tok in combo for tok in JUDICIAL_DESC_TOKENS)
+    """
+    First-level filter to identify likely judicial nominations from summary data.
+    Designed to be permissive to avoid false negatives.
+    
+    Args:
+        nom: Nomination summary data
+        
+    Returns:
+        True if nomination is likely a judicial nomination
+    """
+    # Check description for judicial keywords
+    description = nom.get("description", "").lower()
+    return any(token.lower() in description for token in JUDICIAL_DESC_TOKENS)
 
 
 def is_judicial_nomination(nom: dict) -> bool:
-    if not isinstance(nom, dict):
-        return False
+    """
+    Determine if a nomination is for a judicial position based on the nomination data.
+    
+    This function checks various fields in the nomination data to see if it's a judicial
+    nomination. It's designed to work with both summary and detail responses.
+    
+    Args:
+        nom: Nomination data from Congress.gov API
+        
+    Returns:
+        True if the nomination is for a judicial position, False otherwise
+    """
+    # Extract text fields to search for judicial keywords
+    description = nom.get("description", "").lower()
+    
+    # Check for nominees and their positions
+    nominees_data = nom.get("nominees", {})
+    if isinstance(nominees_data, dict) and "items" in nominees_data:
+        nominees = nominees_data.get("items", [])
+    else:
+        nominees = []
+    
+    # Extract organizations and position titles from nominees
+    orgs = []
+    position_titles = []
+    for nominee in nominees:
+        if isinstance(nominee, dict):
+            org = nominee.get("organization", "").lower()
+            if org:
+                orgs.append(org)
+            
+            position = nominee.get("positionTitle", "").lower()
+            if position:
+                position_titles.append(position)
+    
+    # Check latest action
+    latest_action = nom.get("latestAction", {})
+    latest_action_text = latest_action.get("text", "").lower() if latest_action else ""
+    
+    # Check for judicial organization first (most reliable)
+    for org in orgs:
+        if any(token.lower() in org for token in JUDICIAL_ORG_TOKENS):
+            return True
+    
+    # Check position titles and other text fields for judicial keywords
+    search_text = " ".join([description, latest_action_text] + position_titles)
+    
+    # Now check for judicial keywords in combined text
+    return any(token.lower() in search_text for token in JUDICIAL_DESC_TOKENS)
 
-    # 1️⃣ organization shortcut
-    org = str(nom.get("organization", "")).lower()
-    if any(tok in org for tok in JUDICIAL_ORG_TOKENS):
-        return True
 
-    # 2️⃣ aggregate text fields
-    txt = " ".join(
-        str(nom.get(k, "")).lower()
-        for k in ("description", "positionTitle", "latest_action_text")
-    )
-
-    # 3️⃣ nominee-level check (detail responses)
-    if "nominees" in nom:
-        items = (
-            nom["nominees"].get("items", [])
-            if isinstance(nom["nominees"], dict)
-            else nom["nominees"]
-        )
-        for n in items:
-            txt += " " + str(n.get("positionTitle", "")).lower()
-            txt += " " + str(n.get("organization",  "")).lower()
-
-    return any(tok in txt for tok in JUDICIAL_DESC_TOKENS)
-
-
-def parse_court_from_description(description: str) -> Tuple[Optional[int], Optional[str]]:
+def parse_court_from_description(description: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Parse circuit and court information from nomination description.
     
@@ -88,24 +119,46 @@ def parse_court_from_description(description: str) -> Tuple[Optional[int], Optio
     Returns:
         Tuple of (circuit number or None, court code or None)
     """
-    # Try to extract circuit information
-    circuit_match = re.search(r'(\d+)(?:st|nd|rd|th)? Circuit', description, re.IGNORECASE)
-    if circuit_match:
-        circuit = int(circuit_match.group(1))
-    else:
-        circuit = None
+    circuit = None
+    court = None
     
-    # Try to extract district court information
-    district_match = re.search(r'(Northern|Southern|Eastern|Western|Middle|Central) District of ([A-Z][a-z]+)', description, re.IGNORECASE)
+    # Common patterns in judicial nominations
+    circuit_pattern = r'(?:(\d+)(?:st|nd|rd|th)?\s+Circuit)'
+    district_pattern = r'(?:District\s+of\s+([A-Za-z\s]+))'
+    
+    # Try to extract circuit
+    circuit_match = re.search(circuit_pattern, description, re.IGNORECASE)
+    if circuit_match:
+        circuit = circuit_match.group(1).zfill(2)  # Pad with zero if needed
+    
+    # Try to extract district
+    district_match = re.search(district_pattern, description, re.IGNORECASE)
     if district_match:
-        direction = district_match.group(1)[0].upper()  # Get first letter (N, S, E, W, M, C)
-        state_name = district_match.group(2)
-        # Map state name to postal code (simplified example)
+        state_name = district_match.group(1).strip()
+        
+        # Extract directional suffix if present (e.g., "Northern", "Eastern")
+        direction = None
+        for dir_match in re.finditer(r'\b(Northern|Southern|Eastern|Western|Central|Middle)\b', description, re.IGNORECASE):
+            direction = dir_match.group(1)[0].upper()  # Just take first letter
+            break
+        
+        # Map state name to code
         state_mapping = {
-            "California": "CA",
-            "New York": "NY",
-            "Florida": "FL",
-            # Add more as needed
+            "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
+            "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
+            "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID",
+            "Illinois": "IL", "Indiana": "IN", "Iowa": "IA", "Kansas": "KS",
+            "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
+            "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
+            "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV",
+            "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY",
+            "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK",
+            "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI", "South Carolina": "SC",
+            "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX", "Utah": "UT",
+            "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV",
+            "Wisconsin": "WI", "Wyoming": "WY", "District of Columbia": "DC",
+            "Puerto Rico": "PR", "Virgin Islands": "VI", "Guam": "GU",
+            "American Samoa": "AS", "Northern Mariana Islands": "MP"
         }
         state_code = state_mapping.get(state_name)
         if state_code:
@@ -155,8 +208,17 @@ def transform_nomination_data(nomination_data: Dict[str, Any], full_details: boo
         base_record["latest_action_date"] = latest_action.get("actionDate")
         base_record["latest_action_text"] = latest_action.get("text")
     
-    # Process nominees
-    nominees_data = nomination_data.get("nominees", {}).get("items", [])
+    # Process nominees - handle both list and dict formats
+    nominees_data = []
+    
+    # Get nominees, handling both dictionary and list formats
+    nominees = nomination_data.get("nominees", {})
+    if isinstance(nominees, dict) and "items" in nominees:
+        # Structure: {"nominees": {"items": [...]}}
+        nominees_data = nominees["items"]
+    elif isinstance(nominees, list):
+        # Structure: {"nominees": [...]}
+        nominees_data = nominees
     
     if not nominees_data and "description" in nomination_data:
         # If no detailed nominee data available, create a single record from description
@@ -170,53 +232,53 @@ def transform_nomination_data(nomination_data: Dict[str, Any], full_details: boo
         
         # Try to extract circuit/court from description
         circuit, court = parse_court_from_description(description)
-        if circuit is not None:
+        
+        if circuit:
             base_record["circuit"] = circuit
-        if court is not None:
+            
+        if court:
             base_record["court"] = court
         
-        records.append(base_record.copy())
+        records.append(base_record)
+    
     else:
-        # Process each nominee
-        for i, nominee in enumerate(nominees_data, 1):
-            try:
-                logger.debug(f"Processing nominee {i}/{len(nominees_data)}")
-                record = base_record.copy()
+        # Process each nominee separately
+        for nominee in nominees_data:
+            nominee_record = base_record.copy()
+            
+            # Basic nominee info
+            first_name = nominee.get("firstName", "")
+            last_name = nominee.get("lastName", "")
+            nominee_record["nominee"] = f"{first_name} {last_name}".strip()
+            
+            # Position info
+            nominee_record["position_title"] = nominee.get("positionTitle", "")
+            nominee_record["organization"] = nominee.get("organization", "")
+            
+            # Additional metadata
+            description = nomination_data.get("description", "")
+            nominee_record["description"] = description
+            
+            # Try to extract circuit/court from description or position
+            circuit, court = parse_court_from_description(description)
+            
+            if not circuit and nominee_record.get("position_title"):
+                # Try from position if not found in description
+                position_circuit, position_court = parse_court_from_description(
+                    nominee_record["position_title"]
+                )
+                if position_circuit:
+                    circuit = position_circuit
+                if position_court:
+                    court = position_court
+            
+            if circuit:
+                nominee_record["circuit"] = circuit
                 
-                # Nominee information
-                first_name = nominee.get("firstName", "")
-                middle_name = nominee.get("middleName", "")
-                last_name = nominee.get("lastName", "")
-                full_name = " ".join(filter(None, [first_name, middle_name, last_name]))
-                
-                record["nominee"] = full_name
-                record["state"] = nominee.get("state")
-                
-                # Position information
-                position = nominee.get("positionTitle", "")
-                organization = nominee.get("organization", "")
-                record["position"] = position
-                record["organization"] = organization
-                
-                logger.debug(f"  Name: {full_name}")
-                logger.debug(f"  Position: {position} at {organization}")
-                
-                # Extract circuit/court information from position title
-                circuit, court = parse_court_from_description(position)
-                if circuit is not None:
-                    record["circuit"] = circuit
-                    logger.debug(f"  Extracted circuit: {circuit}")
-                if court is not None:
-                    record["court"] = court
-                    logger.debug(f"  Extracted court: {court}")
-                
-                records.append(record)
-                logger.debug(f"  Successfully processed nominee {i}")
-                
-            except Exception as e:
-                logger.error(f"Error processing nominee {i}: {str(e)}")
-                logger.debug(f"Problematic nominee data: {nominee}")
-                continue
+            if court:
+                nominee_record["court"] = court
+            
+            records.append(nominee_record)
     
     return records
 
@@ -232,16 +294,86 @@ class CongressAPIClient:
             raise ValueError("Congress.gov API key is required")
             
     def get_nominations(self, congress: int, params: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Fetch nominations for a specific congress."""
+        """
+        Fetch nominations for a specific congress with pagination support.
+        
+        This method automatically handles pagination by following the 'next' link
+        in the API response until all records are retrieved.
+        
+        Args:
+            congress: Congress number (e.g., 118)
+            params: Additional parameters to pass to the API
+            
+        Returns:
+            Combined results from all pages with 'nominations' key containing
+            all nominations across all pages
+        """
         url = f"{self.BASE_URL}/nomination/{congress}"
-        default_params = {"api_key": self.api_key, "format": "json", "limit": 500}
+        default_params = {"api_key": self.api_key, "format": "json", "limit": 250}  # Set to known working limit
         if params:
             default_params.update(params)
         
-        logger.info(f"Fetching nominations for {congress}th Congress")
-        response = requests.get(url, params=default_params)
-        response.raise_for_status()
-        return response.json()
+        logger.info(f"Fetching nominations for {congress}th Congress with pagination")
+        
+        # Initialize result structure
+        combined_result = None
+        page = 1
+        total_nominations = []
+        
+        while True:
+            logger.info(f"Fetching page {page} for {congress}th Congress nominations")
+            response = requests.get(url, params=default_params)
+            response.raise_for_status()
+            current_page = response.json()
+            
+            # Initialize the combined result with the first page
+            if combined_result is None:
+                combined_result = current_page
+                if "nominations" not in combined_result:
+                    logger.warning("No 'nominations' key found in API response")
+                    return combined_result
+                    
+            # Extract nominations from current page
+            current_nominations = current_page.get("nominations", [])
+            total_nominations.extend(current_nominations)
+            
+            logger.info(f"Retrieved {len(current_nominations)} nominations from page {page}")
+            
+            # Check if there's a next page link
+            if "pagination" in current_page and "next" in current_page["pagination"]:
+                # Extract the offset for the next page
+                next_link = current_page["pagination"]["next"]
+                if not next_link:
+                    logger.debug("No more pages available")
+                    break
+                
+                try:
+                    # Parse the next link to get the offset parameter
+                    # Handle different URL formats with or without '?' or '&'
+                    parsed_url = urlparse(next_link)
+                    query_params = parse_qs(parsed_url.query)
+                    
+                    if "offset" in query_params:
+                        offset = query_params["offset"][0]
+                        default_params["offset"] = offset
+                        page += 1
+                        logger.info(f"Moving to page {page} with offset {offset}")
+                    else:
+                        logger.warning(f"No offset parameter in next link: {next_link}")
+                        break
+                except Exception as e:
+                    logger.warning(f"Error parsing next link '{next_link}': {str(e)}")
+                    break
+            else:
+                logger.debug("No pagination information or next link, ending pagination")
+                break
+        
+        # Replace the nominations in the first page result with all nominations
+        if combined_result and "nominations" in combined_result:
+            combined_result["nominations"] = total_nominations
+            logger.info(f"Total nominations retrieved after pagination: {len(total_nominations)}")
+        
+        return combined_result
 
     def get_nomination_detail(self, congress: int, nomination_number: int, part_number: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -267,24 +399,42 @@ class CongressAPIClient:
             response.raise_for_status()
             data = response.json()
             
-            # Extract the nomination from the nested response
-            nomination_data = data.get('nomination', {})
+            # Extract the nomination from the nested response - handle both list and dict formats
+            nomination_data = {}
+            
+            if isinstance(data, dict) and 'nomination' in data:
+                # Handle both list and dictionary response formats
+                if isinstance(data['nomination'], list) and data['nomination']:
+                    # If it's a list, use the first item
+                    logger.debug(f"Nomination data returned as a list with {len(data['nomination'])} items")
+                    nomination_data = data['nomination'][0]
+                elif isinstance(data['nomination'], dict):
+                    # If it's a dictionary, use it directly
+                    nomination_data = data['nomination']
+                else:
+                    logger.warning(f"Unexpected nomination format: {type(data['nomination'])}")
+            else:
+                logger.warning("No 'nomination' key found in response or response is not a dictionary")
+                logger.debug(f"Response structure: {type(data)}")
+                # Try to salvage by returning the entire response if it's a dict
+                if isinstance(data, dict):
+                    nomination_data = data
             
             # Log basic info about the response
             logger.debug(f"Received detail for nomination {nomination_number}")
-            logger.trace(f"Full detail response: {data}")
             
             # Log important fields for debugging
-            if 'description' in nomination_data:
+            if isinstance(nomination_data, dict) and 'description' in nomination_data:
                 logger.debug(f"Nomination description: {nomination_data['description']}")
             
             # Handle nominees data structure correctly
-            nominees_data = nomination_data.get('nominees', {})
-            if isinstance(nominees_data, dict) and 'items' in nominees_data:
-                nominees = nominees_data['items']
-                logger.debug(f"Found {len(nominees)} nominees")
-                for i, nominee in enumerate(nominees, 1):
-                    logger.debug(f"  Nominee {i}: {nominee.get('firstName', '')} {nominee.get('lastName', '')} - {nominee.get('positionTitle', 'No position')}")
+            if isinstance(nomination_data, dict):
+                nominees_data = nomination_data.get('nominees', {})
+                if isinstance(nominees_data, dict) and 'items' in nominees_data:
+                    nominees = nominees_data['items']
+                    logger.debug(f"Found {len(nominees)} nominees")
+                    for i, nominee in enumerate(nominees, 1):
+                        logger.debug(f"  Nominee {i}: {nominee.get('firstName', '')} {nominee.get('lastName', '')} - {nominee.get('positionTitle', 'No position')}")
             
             return nomination_data
             
@@ -314,12 +464,13 @@ class CongressAPIClient:
         response = requests.get(url, params=params)
         response.raise_for_status()
         return response.json()
-    
-
-
+        
     def get_judicial_nominations(self, congress: int) -> List[Dict[str, Any]]:
         """
         Fetch and filter for judicial nominations from a single congress.
+        
+        Uses only summary-level filtering to identify judicial nominations,
+        then retrieves detailed data for each one that passes the filter.
 
         Args:
             congress: Congress number (e.g., 118)
@@ -345,39 +496,56 @@ class CongressAPIClient:
         nominations = response.get("nominations", [])
         logger.info(f"Found {len(nominations)} civilian nominations in Congress {congress}")
 
-        # First pass: Filter likely judicial nominations
-        potential_judicial = [
+        # Filter judicial nominations using only summary-level filter
+        judicial_nominations = [
             nom for nom in nominations
             if isinstance(nom, dict) and "number" in nom and is_likely_judicial_summary(nom)
         ]
 
-        logger.info(f"Found {len(potential_judicial)} potential judicial nominations")
+        logger.info(f"Found {len(judicial_nominations)} judicial nominations based on summary data")
+        
+        # Log the first few judicial nominations identified
+        for i, nom in enumerate(judicial_nominations[:3], 1):
+            logger.info(f"Judicial nomination {i}: {nom.get('number')} - {nom.get('description', 'Unknown')}")
 
-        # Second pass: Get details and verify
-        for i, nom in enumerate(potential_judicial, 1):
+        # Process each judicial nomination
+        for i, nom in enumerate(judicial_nominations, 1):
             try:
                 nomination_number = nom["number"]
-                logger.debug(f"Processing potential judicial nomination {i}/{len(potential_judicial)}: {nomination_number}")
-
-                # Get detailed information
-                detail = self.get_nomination_detail(congress, nomination_number)
-                if not detail:
-                    continue
-
-                # Verify with full details
-                if not is_judicial_nomination(detail):
-                    logger.debug(f"Excluded after detail check: {detail.get('description', 'Unknown')}")
-                    continue
-
-                # Transform and add to records
-                transformed = transform_nomination_data(detail)
-                if transformed:
-                    records.extend(transformed)
-                    logger.info(f"Added {len(transformed)} records for judicial nomination {nomination_number}")
+                logger.info(f"Processing judicial nomination {i}/{len(judicial_nominations)}: {nomination_number}")
+                
+                # First, create records from summary data as fallback
+                summary_records = transform_nomination_data(nom)
+                
+                try:
+                    # Get detailed information 
+                    detail = self.get_nomination_detail(congress, nomination_number)
+                    if detail:
+                        # Transform the detail-level data (which has more information)
+                        detail_records = transform_nomination_data(detail, full_details=True)
+                        
+                        if detail_records:
+                            # Use the detail records which have more complete information
+                            records.extend(detail_records)
+                            logger.info(f"Added {len(detail_records)} detail-level records for nomination {nomination_number}")
+                        else:
+                            # Fall back to summary records if detail transformation fails
+                            records.extend(summary_records)
+                            logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number}")
+                    else:
+                        # Fall back to summary records if detail retrieval fails
+                        records.extend(summary_records)
+                        logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number} (detail unavailable)")
+                        
+                except Exception as e:
+                    logger.error(f"Error retrieving details for nomination {nomination_number}: {str(e)}")
+                    # Fall back to summary records on error
+                    records.extend(summary_records)
+                    logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number} (detail error)")
 
             except Exception as e:
                 logger.error(f"Error processing nomination {nomination_number}: {str(e)}", exc_info=True)
                 continue
 
-        logger.info(f"Completed processing. Found {len(records)} judicial nominations")
+        logger.info(f"Completed processing. Found {len(records)} judicial nomination records")
         return records
