@@ -3,14 +3,12 @@
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
-from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
 # Import the module to test
 from nomination_predictor.dataset import (
-    DataPipelineError,
     parse_circuit_court,
     records_to_dataframe,
     save_dataframe_to_csv,
@@ -31,7 +29,7 @@ def validate_vacancy_record(record: Dict[str, Any]) -> None:
     # Define required fields and their expected types
     required_field_types = {
         'court': str,
-        'vacancy_date': str, # directly from our Internet-hosted data ource this is presented to us as a string.  Conversion to datetime can happen during data cleaning & transformations.
+        'vacancy_date': str, # directly from our Internet-hosted data source this is presented to us as a string.  Conversion to datetime can happen during data cleaning & transformations.
         'vacancy_reason': str,
     }
     

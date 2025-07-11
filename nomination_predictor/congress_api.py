@@ -302,79 +302,67 @@ class CongressAPIClient:
     
 
 
-    def get_judicial_nominations(self, current_congress: int, congresses_back: int = 5) -> List[Dict[str, Any]]:
+    def get_judicial_nominations(self, congress: int) -> List[Dict[str, Any]]:
         """
-        Fetch and filter for judicial nominations from multiple congresses.
-        
+        Fetch and filter for judicial nominations from a single congress.
+
         Args:
-            current_congress: Most recent congress number (e.g., 118)
-            congresses_back: How many past congresses to include
-        
+            congress: Congress number (e.g., 118)
+
         Returns:
             List of judicial nominations in the project's format
         """
         records = []
-        logger.info(f"Starting to fetch judicial nominations from Congress {current_congress} back {congresses_back} congresses")
-        
-        for congress in range(current_congress, current_congress - congresses_back, -1):
+        logger.info(f"Fetching judicial nominations for Congress {congress}")
+
+        params = {
+            "api_key": self.api_key,
+            "format": "json",
+            "nominationType": "Civilian"
+        }
+
+        # Get the summary list of nominations
+        response = self.get_nominations(congress, params=params)
+        if not response or not isinstance(response, dict):
+            logger.warning(f"Unexpected response format for Congress {congress}")
+            return records
+
+        nominations = response.get("nominations", [])
+        logger.info(f"Found {len(nominations)} civilian nominations in Congress {congress}")
+
+        # First pass: Filter likely judicial nominations
+        potential_judicial = [
+            nom for nom in nominations
+            if isinstance(nom, dict) and "number" in nom and is_likely_judicial_summary(nom)
+        ]
+
+        logger.info(f"Found {len(potential_judicial)} potential judicial nominations")
+
+        # Second pass: Get details and verify
+        for i, nom in enumerate(potential_judicial, 1):
             try:
-                logger.info(f"Processing Congress {congress}...")
-                
-                # Initial fetch with basic filtering
-                params = {
-                    "api_key": self.api_key,
-                    "format": "json",
-                    "nominationType": "Civilian"
-                }
-                
-                # Get the summary list of nominations
-                response = self.get_nominations(congress, params=params)
-                if not response or not isinstance(response, dict):
-                    logger.warning(f"Unexpected response format for Congress {congress}")
+                nomination_number = nom["number"]
+                logger.debug(f"Processing potential judicial nomination {i}/{len(potential_judicial)}: {nomination_number}")
+
+                # Get detailed information
+                detail = self.get_nomination_detail(congress, nomination_number)
+                if not detail:
                     continue
-                    
-                nominations = response.get("nominations", [])
-                logger.info(f"Found {len(nominations)} civilian nominations in Congress {congress}")
-                
-                # First pass: Filter likely judicial nominations
-                potential_judicial = [
-                    nom for nom in nominations 
-                    if isinstance(nom, dict) and 
-                    "number" in nom and
-                    getis_likely_judicial_summary(nom)
-                ]
-                
-                logger.info(f"Found {len(potential_judicial)} potential judicial nominations")
-                
-                # Second pass: Get details and verify
-                for i, nom in enumerate(potential_judicial, 1):
-                    try:
-                        nomination_number = nom["number"]
-                        logger.debug(f"Processing potential judicial nomination {i}/{len(potential_judicial)}: {nomination_number}")
-                        
-                        # Get detailed information
-                        detail = self.get_nomination_detail(congress, nomination_number)
-                        if not detail:
-                            continue
-                        
-                        # Verify with full details
-                        if not self.is_judicial_nomination(detail):
-                            logger.debug(f"Excluded after detail check: {detail.get('description', 'Unknown')}")
-                            continue
-                        
-                        # Transform and add to records
-                        transformed = transform_nomination_data(detail)
-                        if transformed:
-                            records.extend(transformed)
-                            logger.info(f"Added {len(transformed)} records for judicial nomination {nomination_number}")
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing nomination {nomination_number}: {str(e)}", exc_info=True)
-                        continue
-                        
+
+                # Verify with full details
+                if not is_judicial_nomination(detail):
+                    logger.debug(f"Excluded after detail check: {detail.get('description', 'Unknown')}")
+                    continue
+
+                # Transform and add to records
+                transformed = transform_nomination_data(detail)
+                if transformed:
+                    records.extend(transformed)
+                    logger.info(f"Added {len(transformed)} records for judicial nomination {nomination_number}")
+
             except Exception as e:
-                logger.error(f"Error processing Congress {congress}: {str(e)}", exc_info=True)
+                logger.error(f"Error processing nomination {nomination_number}: {str(e)}", exc_info=True)
                 continue
-            
+
         logger.info(f"Completed processing. Found {len(records)} judicial nominations")
         return records

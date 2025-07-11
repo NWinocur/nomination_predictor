@@ -9,7 +9,6 @@ For data cleaning and transformation, see the data_cleaning.py and features.py m
 """
 
 from datetime import datetime
-import logging
 from pathlib import Path
 import sys
 from typing import Any, Dict, List, Optional, TypedDict, Union
@@ -25,14 +24,6 @@ from nomination_predictor.congress_api import CongressAPIClient
 from nomination_predictor.emergencies_scraper import extract_emergencies_table
 from nomination_predictor.vacancy_scraper import extract_vacancy_table
 from nomination_predictor.web_utils import fetch_html, generate_month_links
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout), logging.FileHandler("data_pipeline.log")],
-)
-logger = logging.getLogger(__name__)
 
 app = typer.Typer()
 
@@ -174,86 +165,80 @@ def parse_circuit_court(court_str: str) -> tuple[int | None, str]:
 
 
 def fetch_data(
-    page_type: str, current_year: int = datetime.now().year, years_back: int = 15
+    page_type: str, year: int = datetime.now().year
 ) -> pd.DataFrame:
     """
-    Fetch and process data for a specific page type (vacancies, confirmations, emergencies).
+    Fetch and process data for a specific page type (vacancies, confirmations, or emergencies) for a single year.
 
     Args:
         page_type: Type of data to fetch ('vacancies', 'confirmations', or 'emergencies')
-        current_year: Current year for generating date ranges
-        years_back: Number of years back to fetch data for
+        year: Year to fetch data for
 
     Returns:
         DataFrame containing the processed data
     """
     all_records = []
-    start_year = current_year - years_back
 
-    logger.info(f"Fetching {page_type} data from {start_year} to {current_year}")
+    logger.info(f"Fetching {page_type} data for {year}")
 
-    # Generate month links for each year and process each month
-    for year in range(start_year, current_year + 1):
-        try:
-            month_links = generate_month_links(year, page_type=page_type)
-            logger.info(f"Processing {len(month_links)} months for {page_type} in {year}")
+    try:
+        month_links = generate_month_links(year, page_type=page_type)
+        logger.info(f"Processing {len(month_links)} months for {page_type} in {year}")
 
-            for link in month_links:
-                try:
-                    # Skip future months in the current year
-                    if year == current_year and int(link["month"]) > datetime.now().month:
-                        continue
-
-                    full_url = f"https://www.uscourts.gov{link['url']}"
-                    logger.debug(f"Fetching {full_url}")
-                    html = fetch_html(full_url)
-
-                    # Use the appropriate extractor based on page type
-                    if page_type == "vacancies":
-                        records = extract_vacancy_table(html)
-                    elif page_type == "confirmations":
-                        records = extract_confirmations_table(html)
-                    elif page_type == "emergencies":
-                        records = extract_emergencies_table(html)
-                    else:
-                        logger.error(f"Invalid page type: {page_type}")
-                        continue
-
-                    if records:
-                        # Add year and month to each record for tracking when the report came from
-                        for record in records:
-                            record.update(
-                                {
-                                    "source_year": str(year),
-                                    "source_month": link["month"],  # Already a string
-                                    "source_page_type": page_type,
-                                }
-                            )
-                        all_records.extend(records)
-                        logger.info(
-                            f"Processed {len(records)} {page_type} records from {year}-{link['month']}"
-                        )
-
-                except Exception as e:
-                    logger.error(f"Error processing {link['url']}: {e}")
+        for link in month_links:
+            try:
+                # Skip future months in the current year
+                if year == datetime.now().year and int(link["month"]) > datetime.now().month:
                     continue
 
-        except Exception as e:
-            logger.error(f"Error processing year {year} for {page_type}: {e}")
-            continue
+                full_url = f"https://www.uscourts.gov{link['url']}"
+                logger.debug(f"Fetching {full_url}")
+                html = fetch_html(full_url)
+
+                # Use the appropriate extractor based on page type
+                if page_type == "vacancies":
+                    records = extract_vacancy_table(html)
+                elif page_type == "confirmations":
+                    records = extract_confirmations_table(html)
+                elif page_type == "emergencies":
+                    records = extract_emergencies_table(html)
+                else:
+                    logger.error(f"Invalid page type: {page_type}")
+                    continue
+
+                if records:
+                    # Add year and month to each record for tracking when the report came from
+                    for record in records:
+                        record.update(
+                            {
+                                "source_year": str(year),
+                                "source_month": link["month"],
+                                "source_page_type": page_type,
+                            }
+                        )
+                    all_records.extend(records)
+                    logger.info(
+                        f"Processed {len(records)} {page_type} records from {year}-{link['month']}"
+                    )
+
+            except Exception as e:
+                logger.error(f"Error processing {link['url']}: {e}")
+                continue
+
+    except Exception as e:
+        logger.error(f"Error processing year {year} for {page_type}: {e}")
 
     return pd.DataFrame(all_records) if all_records else pd.DataFrame()
 
 
 def fetch_data_from_congress_api(
-    current_congress: int = 118, congresses_back: int = 5
+    congress: int = 118
 ) -> pd.DataFrame:
     """
-    Fetch judicial nomination data from Congress.gov API.
+    Fetch judicial nomination data from Congress.gov API for a single congress.
 
     Args:
-        current_congress: The current congress number to start fetching from
-        congresses_back: Number of congresses to go back in history
+        congress: The congress number to fetch nominations for
 
     Returns:
         DataFrame containing judicial nomination data
@@ -265,9 +250,10 @@ def fetch_data_from_congress_api(
         logger.warning("To use Congress.gov API, set CONGRESS_API_KEY environment variable")
         return pd.DataFrame()
 
-    all_records = []
+    records = client.get_judicial_nominations(congress)
+    logger.info(f"Fetched {len(records)} judicial nominations from Congress.gov API for Congress {congress}")
+    return records_to_dataframe(records)
 
-    # Iterate through congresses
     for congress in range(current_congress, current_congress - congresses_back - 1, -1):
         try:
             logger.info(f"Fetching judicial nominations for {congress}th Congress")
@@ -503,35 +489,32 @@ def main(
 
         # Calculate congresses back based on years back (approx. 2 years per congress)
         congresses_back = (years_back + 1) // 2
-
-        # Fetch data using Congress API
-        try:
-            # For now, just output to a separate file to avoid conflicts
-            api_df = fetch_data_from_congress_api(
-                current_congress=current_congress, congresses_back=congresses_back
-            )
-
-            if not api_df.empty:
-                api_output_path = output_dir / "congress_api_judicial_data.csv"
-                save_dataframe_to_csv(api_df, "congress_api_judicial_data", output_dir)
-                logger.success(f"Congress.gov API data saved to: {api_output_path}")
-
-                # Validate API data against legacy schemas
-                validation_results = compare_and_validate_api_data(api_df)
-                logger.info("API data validation results:")
-                for key, value in validation_results.items():
-                    logger.info(f"{key}: {value}")
-            else:
-                logger.warning("No data retrieved from Congress.gov API")
-        except Exception as e:
-            logger.error(f"Error using Congress.gov API: {e}")
-            logger.info("Falling back to web scraping method")
-            use_congress_api = False
+        start_congress = current_congress - congresses_back
+        all_api_records = []
+        for congress in range(current_congress, start_congress - 1, -1):
+            try:
+                api_df = fetch_data_from_congress_api(congress=congress)
+                if not api_df.empty:
+                    all_api_records.append(api_df)
+            except Exception as e:
+                logger.error(f"Error fetching data for Congress {congress}: {e}")
+                continue
+        if all_api_records:
+            api_df = pd.concat(all_api_records, ignore_index=True)
+            api_output_path = output_dir / "congress_api_judicial_data.csv"
+            save_dataframe_to_csv(api_df, "congress_api_judicial_data", output_dir)
+            logger.success(f"Congress.gov API data saved to: {api_output_path}")
+            validation_results = compare_and_validate_api_data(api_df)
+            logger.info("API data validation results:")
+            for key, value in validation_results.items():
+                logger.info(f"{key}: {value}")
+        else:
+            logger.warning("No data retrieved from Congress.gov API")
+        return
 
     # Continue with existing web scraping logic if not using API or API failed
     if not use_congress_api:
         try:
-            # Create output directory if it doesn't exist
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
             output_path = output_dir / output_filename
@@ -539,26 +522,40 @@ def main(
 
             logger.info(f"Starting data pipeline. Output will be saved to: {output_path}")
 
-            # Process vacancies and confirmations
             dfs = []
 
             # Fetch and process vacancies
             logger.info("Processing vacancy data...")
-            vacancies_df = fetch_data("vacancies", current_year, years_back)
+            vacancies_dfs = []
+            for year in range(current_year - years_back, current_year + 1):
+                df = fetch_data("vacancies", year)
+                if not df.empty:
+                    vacancies_dfs.append(df)
+            vacancies_df = pd.concat(vacancies_dfs, ignore_index=True) if vacancies_dfs else pd.DataFrame()
             if not vacancies_df.empty:
                 dfs.append(vacancies_df)
                 logger.info(f"Processed {len(vacancies_df)} vacancy records")
 
             # Fetch and process confirmations
             logger.info("Processing confirmation data...")
-            confirmations_df = fetch_data("confirmations", current_year, years_back)
+            confirmations_dfs = []
+            for year in range(current_year - years_back, current_year + 1):
+                df = fetch_data("confirmations", year)
+                if not df.empty:
+                    confirmations_dfs.append(df)
+            confirmations_df = pd.concat(confirmations_dfs, ignore_index=True) if confirmations_dfs else pd.DataFrame()
             if not confirmations_df.empty:
                 dfs.append(confirmations_df)
                 logger.info(f"Processed {len(confirmations_df)} confirmation records")
 
             # Fetch and process emergencies
             logger.info("Processing judicial emergency data...")
-            emergencies_df = fetch_data("emergencies", current_year, years_back)
+            emergencies_dfs = []
+            for year in range(current_year - years_back, current_year + 1):
+                df = fetch_data("emergencies", year)
+                if not df.empty:
+                    emergencies_dfs.append(df)
+            emergencies_df = pd.concat(emergencies_dfs, ignore_index=True) if emergencies_dfs else pd.DataFrame()
             if not emergencies_df.empty:
                 dfs.append(emergencies_df)
                 logger.info(f"Processed {len(emergencies_df)} emergency records")
@@ -566,23 +563,17 @@ def main(
             # Combine all data
             if dfs:
                 combined_df = pd.concat(dfs, ignore_index=True)
-
-                # Save the combined data
                 save_dataframe_to_csv(combined_df, output_path.stem, output_dir)
-
-                # Also save individual datasets for reference
                 if not vacancies_df.empty:
                     save_dataframe_to_csv(vacancies_df, "judicial_vacancies", output_dir)
                 if not confirmations_df.empty:
                     save_dataframe_to_csv(confirmations_df, "judicial_confirmations", output_dir)
                 if not emergencies_df.empty:
                     save_dataframe_to_csv(emergencies_df, "judicial_emergencies", output_dir)
-
                 return combined_df
             else:
                 logger.warning("No records were processed")
                 return pd.DataFrame()
-
         except Exception as e:
             logger.error(f"Pipeline failed: {e}")
             raise
