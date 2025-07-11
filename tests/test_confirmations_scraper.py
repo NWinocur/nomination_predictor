@@ -8,17 +8,9 @@ from bs4 import BeautifulSoup
 import pytest
 
 from nomination_predictor.confirmations_scraper import (
-    _detect_table_format,
     extract_confirmations_table,
     is_valid_court_identifier,
 )
-
-
-def get_pre_downloaded_confirmations_html_from(year: int, month_num: str) -> str:
-    """Return the content of a real confirmations page from the fixtures."""
-    path = Path(__file__).parent / "fixtures" / "pages" / str(year) / month_num / "confirmations.html"
-    with open(path, 'r', encoding='utf-8') as f:
-        return f.read()
 
 
 def validate_confirmation_record(record: Dict[str, Any]) -> None:
@@ -118,66 +110,3 @@ def test_extract_confirmations_table(year, month, expected_confirmations):
             f"Invalid court identifier: {record['circuit_district']}"
 
 
-def test_detect_table_format_modern():
-    """Test that modern tables with thead/tbody are correctly identified."""
-    # Modern table with thead and tbody
-    modern_html = """
-    <table>
-        <thead>
-            <tr>
-                <th>Nominee</th>
-                <th>Nomination Date</th>
-                <th>Confirmation Date</th>
-                <th>Circuit/District</th>
-                <th>Incumbent</th>
-                <th>Vacancy Date</th>
-                <th>Vacancy Reason</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td>Doe, John</td>
-                <td>01/01/2023</td>
-                <td>02/01/2023</td>
-                <td>01 - 1st Circuit</td>
-                <td>Smith, Jane</td>
-                <td>12/31/2022</td>
-                <td>Retired</td>
-            </tr>
-        </tbody>
-    </table>
-    """
-    soup = BeautifulSoup(modern_html, 'html.parser')
-    table = soup.find('table')
-    assert _detect_table_format(table) == 'modern'
-
-def test_detect_table_format_empty():
-    """Test that empty tables default to modern format."""
-    # Empty table
-    empty_html = "<table></table>"
-    soup = BeautifulSoup(empty_html, 'html.parser')
-    table = soup.find('table')
-    assert _detect_table_format(table) == 'modern'
-
-
-def test_detect_table_format_with_real_fixtures(fixtures_dir):
-    """Test detection with real fixture files to ensure compatibility."""
-    # Test with a known legacy fixture (2010)
-    try:
-        legacy_html = (fixtures_dir / "pages" / "2010" / "01" / "confirmations.html").read_text()
-        soup = BeautifulSoup(legacy_html, 'html.parser')
-        table = soup.find('table')
-        if table:
-            assert _detect_table_format(table) == 'legacy', "2010 fixture should be detected as legacy format"
-    except FileNotFoundError:
-        pytest.skip("2010 confirmations fixture not found")
-    
-    # Test with a known modern fixture (2024)
-    try:
-        modern_html = (fixtures_dir / "pages" / "2024" / "01" / "confirmations.html").read_text()
-        soup = BeautifulSoup(modern_html, 'html.parser')
-        table = soup.find('table')
-        if table:
-            assert _detect_table_format(table) == 'modern', "2024 fixture should be detected as modern format"
-    except FileNotFoundError:
-        pytest.skip("2024 confirmations fixture not found")

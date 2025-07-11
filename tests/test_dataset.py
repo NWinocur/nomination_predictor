@@ -62,12 +62,6 @@ def validate_vacancy_record(record: Dict[str, Any]) -> None:
                 assert False, f"Invalid date format in field '{date_field}': {record[date_field]}. Expected MM/DD/YYYY"
 
 
-def get_pre_downloaded_vacancies_html_from(year, month_num):
-    """Return the content of a real vacancies page from the fixtures."""
-    path = Path(__file__).parent / "fixtures" / "pages" / str(year) / month_num / "vacancies.html"
-    with open(path, 'r', encoding='utf-8') as f:
-        return f.read()
-
 # Fixtures
 @pytest.fixture
 def sample_dataframe():

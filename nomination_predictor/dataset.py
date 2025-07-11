@@ -164,6 +164,44 @@ def parse_circuit_court(court_str: str) -> tuple[int | None, str]:
     return circuit, court_part
 
 
+
+def is_valid_court_identifier(court: str) -> bool:
+    """Check if a string is a valid court identifier.
+    
+    Args:
+        court: The court identifier string to validate
+        
+    Returns:
+        bool: True if the identifier matches known court formats, False otherwise
+    """
+    if not isinstance(court, str) or not court.strip():
+        return False
+        
+    court = court.strip()
+    return bool(
+        re.match(r'^\d+\s*-\s*[A-Za-z]+', court) or  # 01 - CCA
+        re.match(r'^[A-Za-z]+\s*-\s*[A-Za-z]+', court) or  # DC - DC, FD - CCA
+        re.match(r'^IT$', court) or  # International Trade court
+        re.match(r'^CL$', court) or  # Federal Claims court
+        re.match(r'^SC$', court) or  # Supreme Court
+        re.match(r'^[A-Za-z\s]+(?:Circuit|Court|District)', court, re.IGNORECASE)  # 1st Circuit
+    )
+
+
+def _is_valid_date(date_str: str) -> bool:
+    """Check if a string is a valid date in MM/DD/YYYY format."""
+    try:
+        if not date_str or len(date_str) != 10 or date_str[2] != '/' or date_str[5] != '/':
+            return False
+        month, day, year = map(int, date_str.split('/'))
+        if month < 1 or month > 12 or day < 1 or day > 31 or year < 1900 or year > 2100:
+            return False
+        return True
+    except (ValueError, IndexError):
+        return False
+
+
+
 def fetch_data(
     page_type: str, year: int = datetime.now().year
 ) -> pd.DataFrame:

@@ -10,13 +10,6 @@ import pytest
 from nomination_predictor.vacancy_scraper import _detect_table_format, extract_vacancy_table
 
 
-def get_pre_downloaded_vacancies_html_from(year: int, month_num: str) -> str:
-    """Return the content of a real vacancies page from the fixtures."""
-    path = Path(__file__).parent / "fixtures" / "pages" / str(year) / month_num / "vacancies.html"
-    with open(path, 'r', encoding='utf-8') as f:
-        return f.read()
-
-
 def validate_vacancy_record(record: Dict[str, Any]) -> None:
     """Validate the structure and content of a vacancy record.
     
@@ -136,41 +129,3 @@ def test_extract_vacancy_table(year, month, expected_vacancies, expected_nominee
                     datetime.strptime(record[date_field], "%m/%d/%Y")
                 except ValueError:
                     assert False, f"Invalid date format in {date_field}: {record[date_field]}"
-
-
-def test_detect_table_format_modern():
-    """Test that modern tables with thead/tbody are correctly identified."""
-    html = """
-    <table>
-        <thead><tr><th>Court</th><th>Judge</th></tr></thead>
-        <tbody><tr><td>1st Circuit</td><td>John Doe</td></tr></tbody>
-    </table>
-    """
-    soup = BeautifulSoup(html, 'html.parser')
-    table = soup.find('table')
-    assert _detect_table_format(table) == 'modern'
-
-
-def test_detect_table_format_empty():
-    """Test that empty tables default to modern format."""
-    html = "<table></table>"
-    soup = BeautifulSoup(html, 'html.parser')
-    table = soup.find('table')
-    assert _detect_table_format(table) == 'modern'
-
-
-def test_detect_table_format_with_real_fixtures(fixtures_dir):
-    """Test detection with real fixture files to ensure compatibility."""
-    # Test with a known legacy fixture (2010)
-    legacy_path = fixtures_dir / "pages" / "2010" / "01" / "vacancies.html"
-    with open(legacy_path, 'r', encoding='utf-8') as f:
-        soup = BeautifulSoup(f.read(), 'html.parser')
-        table = soup.find('table')
-        assert _detect_table_format(table) == 'legacy'
-    
-    # Test with a known modern fixture (2020)
-    modern_path = fixtures_dir / "pages" / "2020" / "01" / "vacancies.html"
-    with open(modern_path, 'r', encoding='utf-8') as f:
-        soup = BeautifulSoup(f.read(), 'html.parser')
-        table = soup.find('table')
-        assert _detect_table_format(table) == 'modern'

@@ -6,20 +6,36 @@
 
 A project created for presentation at the end of 4geeks' Data Science and Machine Learning cohort Miami-ds-10
 
-This project does the following:
+This project's notebooks shall perform the following:
 
-1. Scrapes the US Courts website for HTML pages containing information about judicial vacancies. The pages are specified via `config.py`
-2. Parses those year-level pages to look for links to month-level pages.
-3. Follows those links to the month-level pages to look for their links to HTML tables and/or PDFs of Judicial Vacancy data, Judicial Emergency data, and Judicial Confirmation data.
-4. Downloads those pages in their original file format to `data/external`
-5. Normalizes malformed HTML tables (such as from January 2001) into more-readable tables.
-6. Restructures pertinent HTML tables into dataframes.  This is the primary responsibility of `dataset.py`
-7. Stores that information in a raw data folder.  By default, `config.py` specifies that these CSV files are stored in `data/raw`. Despite the name "CSV" the data uses a different character as a delimiter because characters such as `,` and `.` and `-` and `/` are ubiquitous throughout the original source's fields.
-8. Reads in those raw data files to build a pandas dataframe or dataframes to use as input for data cleaning.
-9. Cleans the data to uniquely identify vacancy incidents and tidy away duplicates.  This is the primary responsibility of `data_cleaning.py`
-10. Feature-engineers data not existing in the raw data, but which is necessary for training a machine learning model.  This is the primary responsibility of `features.py`
-11. Trains a machine learning model to predict the likely time estimate until a nomination occurs or a nomination is confirmed for a judicial vacancy.  This is the primary responsibility of `modeling.py`
-12. Builds a Streamlit webapp with which users can obtain estimates given their inputs (e.g. the type of vacancy, the court, the circuit, etc.) for an existing or hypothetical vacancy. This webapp makes calls to `predict.py` which performs inference using the trained model.
+Notebook 0 shall:
+
+1. Call `dataset.py` to either look for and use already-downloaded Federal Court information from the Federal Judicial Center (FJC), or if no such data is found (or if the input arg to force a data refresh is specified), download it with the help of `fjc_data.py`. The URLs to the FJC excel spreadsheets and CSV files are specified via `config.py`.  Any data saved by `dataset.py` shall be saved to `data/external`.
+2. Call `dataset.py` to either look for and use already-downloaded Congress information from the US Congress API, or if no such data is found (or if the input arg to force a data refresh is specified), download it using the API key specified via environment variable `CONGRESS_API_KEY`.
+3. Convert the cached or downloaded data -- with as few changes to their values as feasible just yet -- into dataframe(s), which is then be saved into `data/raw`.
+
+Notebook 1 shall:
+
+1. Load dataframe(s) that Notebook 0 had saved into `data/raw`.
+2. Call `features.py` functions to perform cleaning and feature-engineering, saving interim work to `data/interim`.
+
+Notebook 2 shall:
+
+1. Load dataframe(s) that Notebook 1 had saved into `data/interim`
+2. Call `plots.py` to generate visualizations of the data and provide exploratory data analysis.
+3. Make whatever adjustments to data appear appropriate given interpretations made during exploratory data analysis, and save the resulting dataframe(s) to `data/processed`.
+
+Notebook 3 shall:
+
+1. Load dataframe(s) that Notebook 2 had saved to `data/processed`
+2. Call `modeling.py` to train a machine learning model (TBD as of writing this: XGBoost or Regularized Linear Regression) to predict the likely time estimate between when a vacancy starts and when a nomination occurs, or the predict the likely time estimate between when a vacancy starts and when the replacement appointee is confirmed, or predict the likely time estimate between when a person is nominated and when their nomination is confirmed.
+3. Evaluate trained model or models to select which to use in subsequent steps
+4. Save the trained model to `models/`.
+
+Notebook 4 shall:
+
+1. Load the model that Notebook 3 had saved to `models/`.
+2. Be a proof-of-concept space for a follow-up script to build a Streamlit webapp with which users can obtain estimates given their inputs (e.g. the type of vacancy, the court, the circuit, etc.) for an existing or hypothetical vacancy. This webapp shall make calls to `predict.py` which performs inference using the trained model.
 
 ## Limitations
 

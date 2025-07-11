@@ -35,8 +35,6 @@ dependencies = [
     "tqdm",
     "types-tqdm",
     "typer",
-    "beautifulsoup4",
-    "google-cloud-documentai",
 ]
 requires-python = "==3.13.5"
 [project.optional-dependencies]

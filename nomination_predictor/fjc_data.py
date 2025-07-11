@@ -5,21 +5,16 @@ This module provides utilities for loading, parsing, and transforming FJC data f
 building the seat timeline table, and crosswalking with other data sources.
 """
 
-from datetime import datetime
-import os
-from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
-import numpy as np
 import pandas as pd
 
-from nomination_predictor.config import get_project_root
+from nomination_predictor.config import EXTERNAL_DATA_DIR
 
 # Path constants
-FJC_DATA_DIR = get_project_root() / "data" / "raw" / "FederalJudicialCenter"
-PROCESSED_DATA_DIR = get_project_root() / "data" / "processed"
+FJC_DATA_DIR = EXTERNAL_DATA_DIR / "FederalJudicialCenter"  # Source directory for FJC data
 
 
 def parse_fjc_date(date_str: str) -> Optional[pd.Timestamp]:
@@ -44,19 +39,19 @@ def parse_fjc_date(date_str: str) -> Optional[pd.Timestamp]:
     if not date_str:
         return pd.NaT
     
-    try:
-        # Try standard pandas date parsing first
-        return pd.to_datetime(date_str, errors='coerce')
-    except:
-        # If that fails, try manual parsing
-        pass
+    # Try standard pandas date parsing first
+    return_val = pd.to_datetime(date_str, errors='coerce')
+    if pd.notna(return_val):
+        return return_val
+    
+    # If standard parsing fails, try manual parsing
     
     # Handle yyyy-mm-dd format (Excel format for pre-1900 dates)
     if re.match(r'^\d{4}-\d{1,2}-\d{1,2}$', date_str):
         try:
             year, month, day = map(int, date_str.split('-'))
             return pd.Timestamp(year=year, month=month, day=day)
-        except:
+        except (ValueError, IndexError):
             return pd.NaT
     
     # Handle mm/dd/yyyy format (CSV format)
@@ -64,7 +59,7 @@ def parse_fjc_date(date_str: str) -> Optional[pd.Timestamp]:
         try:
             month, day, year = map(int, date_str.split('/'))
             return pd.Timestamp(year=year, month=month, day=day)
-        except:
+        except (ValueError, IndexError):
             return pd.NaT
     
     return pd.NaT
