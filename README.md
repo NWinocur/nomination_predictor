@@ -244,5 +244,7 @@ Example: `0.01-pjb-data-source-1.ipynb`
 
 ## Acknowledgments
 
-- Data source: [US Courts - Judicial Vacancies](https://www.uscourts.gov/judges-judgeships/judicial-vacancies)
+- Data source: History of the Federal Judiciary. <http://www.fjc.gov>. Web site of the Federal Judicial Center, Washington, DC. 
+- Data source: Congress.gov API <https://api.congress.gov>. Hosted by the United States Congress, Washington, DC.
+- Data source (used by earlier versions of code in this same repository): [US Courts - Judicial Vacancies](https://www.uscourts.gov/judges-judgeships/judicial-vacancies)
 - Project structure based on [Cookiecutter Data Science](https://drivendata.github.io/cookiecutter-data-science/)
