@@ -171,42 +171,54 @@ def parse_court_from_description(description: str) -> Tuple[Optional[str], Optio
     return circuit, court
 
 
-def transform_nomination_data(nomination_data: Dict[str, Any], full_details: bool = False) -> List[Dict[str, Any]]:
+def normalize_column_names(data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Transform Congress.gov API nomination data into project's record format.
+    Normalize column names in API data (similar to how we handle FJC data).
+    
+    Args:
+        data: Dictionary with API data
+        
+    Returns:
+        Dictionary with normalized column names (lowercase, underscores)
+    """
+    if not data:
+        return {}
+        
+    # Handle flat dictionary case
+    if isinstance(data, dict):
+        return {k.lower().replace(" ", "_"): v for k, v in data.items()}
+    
+    # If it's a list, normalize each item in the list
+    if isinstance(data, list):
+        return [normalize_column_names(item) for item in data]
+        
+    # For other types, return as is
+    return data
+
+
+def extract_nomination_data(nomination_data: Dict[str, Any], full_details: bool = False) -> List[Dict[str, Any]]:
+    """
+    Extract Congress.gov API nomination data, preserving original values and structure.
+    Only normalizes column names for consistency with other data sources.
     
     Args:
         nomination_data: Nomination data from Congress.gov API
-        full_details: Whether this is a full nomination detail object
+        full_details: Whether this is a full nomination detail object (to properly trace logs)
         
     Returns:
-        List of records in the project's format
+        List of nomination records with minimal transformations
     """
-    logger.debug(f"Transforming nomination data (full_details={full_details})")
+    logger.debug(f"Extracting nomination data (full_details={full_details})")
     logger.trace(f"Input data: {nomination_data}")
     
     records = []
     
-    # Basic nomination information
-    base_record = {
-        "congress": nomination_data.get("congress"),
-        "nomination_number": nomination_data.get("number"),
-        "citation": nomination_data.get("citation"),
-        "source": "congress.gov_api",
-        "source_year": datetime.now().year,  # Current data fetch year
-        "source_month": datetime.now().month,  # Current data fetch month
+    # Add metadata fields that aren't in the API response
+    metadata = {
+        "data_source": "congress.gov_api",  # Track the data source
+        "retrieval_date": datetime.now().isoformat(),  # When this data was retrieved
+        "is_detail_record": full_details,  # Whether this came from detail or summary
     }
-    
-    # Parse dates
-    received_date = nomination_data.get("receivedDate")
-    if received_date:
-        base_record["nomination_date"] = received_date
-    
-    # Extract latest action
-    latest_action = nomination_data.get("latestAction", {})
-    if latest_action:
-        base_record["latest_action_date"] = latest_action.get("actionDate")
-        base_record["latest_action_text"] = latest_action.get("text")
     
     # Process nominees - handle both list and dict formats
     nominees_data = []
@@ -220,82 +232,36 @@ def transform_nomination_data(nomination_data: Dict[str, Any], full_details: boo
         # Structure: {"nominees": [...]}
         nominees_data = nominees
     
-    # Add description to base record for all cases
-    description = nomination_data.get("description", "")
-    base_record["description"] = description
-    
-    # Try to extract circuit/court from description for all records
-    circuit, court = parse_court_from_description(description)
-    if circuit:
-        base_record["circuit"] = circuit
-        
-    if court:
-        base_record["court"] = court
-    
-    # If no nominees data available, create a single record without nominee info
+    # If no nominees data available, create a single record with just nomination data
     if not nominees_data:
-        records.append(base_record.copy())
+        # Create a base record with all top-level nomination data
+        record = {}
+        
+        # Copy all top-level fields from the nomination data
+        for key, value in nomination_data.items():
+            if key != "nominees":  # Skip nominees field since we're handling separately
+                record[key] = value
+                
+        # Add metadata
+        record.update(metadata)
+        records.append(record)
     else:
         # Process each nominee separately
         for nominee in nominees_data:
-            nominee_record = base_record.copy()
+            record = {}
             
-            # Basic nominee info with all possible name components
-            prefix = nominee.get("prefix", "")
-            first_name = nominee.get("firstName", "")
-            middle_name = nominee.get("middleName", "")
-            last_name = nominee.get("lastName", "")
-            suffix = nominee.get("suffix", "")
+            # Copy all top-level fields from the nomination data
+            for key, value in nomination_data.items():
+                if key != "nominees":  # Skip nominees field since we're handling separately
+                    record[key] = value
             
-            # Construct the nominee's full name including prefix and suffix if available
-            full_name_parts = []
-            if prefix:
-                full_name_parts.append(prefix)
-            if first_name:
-                full_name_parts.append(first_name)
-            if middle_name:
-                full_name_parts.append(middle_name)
-            if last_name:
-                full_name_parts.append(last_name)
-            if suffix:
-                full_name_parts.append(suffix)
+            # Add all nominee fields with nominee_ prefix to avoid collisions
+            for key, value in nominee.items():
+                record[f"nominee_{key}"] = value
                 
-            if full_name_parts:
-                nominee_record["nominee"] = " ".join(full_name_parts)
-            
-            # Add additional nominee details
-            nominee_record["state"] = nominee.get("state", "")
-            nominee_record["effective_date"] = nominee.get("effectiveDate", "")
-            nominee_record["predecessor_name"] = nominee.get("predecessorName", "")
-            
-            # Position info
-            nominee_record["position_title"] = nominee.get("positionTitle", "")
-            nominee_record["organization"] = nominee.get("organization", "")
-            
-            # Additional metadata
-            description = nomination_data.get("description", "")
-            nominee_record["description"] = description
-            
-            # Try to extract circuit/court from description or position
-            circuit, court = parse_court_from_description(description)
-            
-            if not circuit and nominee_record.get("position_title"):
-                # Try from position if not found in description
-                position_circuit, position_court = parse_court_from_description(
-                    nominee_record["position_title"]
-                )
-                if position_circuit:
-                    circuit = position_circuit
-                if position_court:
-                    court = position_court
-            
-            if circuit:
-                nominee_record["circuit"] = circuit
-                
-            if court:
-                nominee_record["court"] = court
-            
-            records.append(nominee_record)
+            # Add metadata
+            record.update(metadata)
+            records.append(record)
     
     return records
 
@@ -517,12 +483,13 @@ class CongressAPIClient:
         
         Uses only summary-level filtering to identify judicial nominations,
         then retrieves detailed data for each one that passes the filter.
+        Returns raw API data with minimal processing (column normalization only).
 
         Args:
             congress: Congress number (e.g., 118)
 
         Returns:
-            List of judicial nominations in the project's format
+            List of judicial nomination records with minimal processing
         """
         logger.info(f"Fetching judicial nominations for Congress {congress}")
         
@@ -558,8 +525,8 @@ class CongressAPIClient:
                 
             logger.info(f"Processing judicial nomination {i+1}/{len(judicial_nominations)}: {nomination_number}")
             
-            # First create records from summary data as fallback
-            summary_records = transform_nomination_data(nomination, full_details=False)
+            # First extract records from summary data as fallback
+            summary_records = extract_nomination_data(nomination, full_details=False)
             
             # Fetch detailed information
             try:
@@ -571,8 +538,8 @@ class CongressAPIClient:
                     detailed_records.extend(summary_records)
                     continue
                     
-                # Transform the detail data into project format
-                records = transform_nomination_data(detail, full_details=True)
+                # Extract the detail data with minimal processing
+                records = extract_nomination_data(detail, full_details=True)
                 
                 if records:
                     detailed_records.extend(records)
@@ -591,5 +558,8 @@ class CongressAPIClient:
                 import traceback
                 logger.debug(f"Traceback: {traceback.format_exc()}")
         
-        logger.info(f"Processed {len(detailed_records)} total judicial nomination records for Congress {congress}")
-        return detailed_records
+        # Apply column name normalization to all records
+        normalized_records = [normalize_column_names(record) for record in detailed_records]
+        
+        logger.info(f"Processed {len(normalized_records)} total judicial nomination records for Congress {congress}")
+        return normalized_records
