@@ -335,14 +335,13 @@ class CongressAPIClient:
         if params:
             default_params.update(params)
         
-        logger.info(f"Fetching nominations for {congress}th Congress with pagination")
+        logger.info(f"Fetching nominations for {congress}th Congress with auto-pagination option set to {auto_paginate}")
         
         # Initialize result structure
         combined_result = None
         page = 1
         total_nominations = []
         
-        logger.info(f"{auto_paginate=}")
         while True:
             logger.info(f"Fetching page {page} for {congress}th Congress nominations")
             response = requests.get(url, params=default_params)
