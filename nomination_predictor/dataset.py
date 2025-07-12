@@ -348,24 +348,6 @@ def _is_valid_date(date_str: str) -> bool:
 
 
 
-def fetch_data(
-    page_type: str, year: int = datetime.now().year
-) -> pd.DataFrame:
-    """
-    Fetch and process data for a specific page type (vacancies, confirmations, or emergencies) for a single year.
-
-    Args:
-        page_type: Type of data to fetch ('vacancies', 'confirmations', or 'emergencies')
-        year: Year to fetch data for
-
-    Returns:
-        DataFrame containing the processed data
-    """
-    logger.warning("Not yet reimplemented, returning empty dataframe")
-
-    return  pd.DataFrame()
-
-
 def fetch_data_from_congress_api(
     congress: int = 118
 ) -> pd.DataFrame:

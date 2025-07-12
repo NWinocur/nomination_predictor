@@ -22,11 +22,7 @@ from tqdm import tqdm
 import typer
 
 from nomination_predictor.config import INTERIM_DATA_DIR, RAW_DATA_DIR
-from nomination_predictor.congress_api_utils import (
-    clean_name,
-    create_full_name_from_parts,
-    enrich_congress_nominees_dataframe,
-)
+from nomination_predictor.congress_api_utils import enrich_congress_nominees_dataframe
 
 app = typer.Typer()
 
@@ -37,7 +33,7 @@ app = typer.Typer()
 
 PRESIDENT_TERMS = [
     # Modern era (you can extend backward easily)
-    (46, date(2021, 1, 20), None),            # Joseph R. Biden
+    (46, date(2021, 1, 20), None),  # Joseph R. Biden
     (45, date(2017, 1, 20), date(2021, 1, 20)),
     (44, date(2009, 1, 20), date(2017, 1, 20)),
     (43, date(2001, 1, 20), date(2009, 1, 20)),
@@ -45,19 +41,19 @@ PRESIDENT_TERMS = [
     (41, date(1989, 1, 20), date(1993, 1, 20)),
     (40, date(1981, 1, 20), date(1989, 1, 20)),
     (39, date(1977, 1, 20), date(1981, 1, 20)),
-    (38, date(1974, 8,  9), date(1977, 1, 20)),
-    (37, date(1969, 1, 20), date(1974, 8,  9)),
-    (36, date(1963, 11,22), date(1969, 1, 20)),
-    (35, date(1961, 1, 20), date(1963, 11,22)),
+    (38, date(1974, 8, 9), date(1977, 1, 20)),
+    (37, date(1969, 1, 20), date(1974, 8, 9)),
+    (36, date(1963, 11, 22), date(1969, 1, 20)),
+    (35, date(1961, 1, 20), date(1963, 11, 22)),
     (34, date(1953, 1, 20), date(1961, 1, 20)),
     (33, date(1945, 4, 12), date(1953, 1, 20)),
-    (32, date(1933, 3,  4), date(1945, 4, 12)),
-    (31, date(1929, 3,  4), date(1933, 3,  4)),
-    (30, date(1923, 8,  2), date(1929, 3,  4)),
-    (29, date(1921, 3,  4), date(1923, 8,  2)),
-    (28, date(1913, 3,  4), date(1921, 3,  4)),
-    (27, date(1909, 3,  4), date(1913, 3,  4)),
-    (26, date(1901, 9, 14), date(1909, 3,  4)),
+    (32, date(1933, 3, 4), date(1945, 4, 12)),
+    (31, date(1929, 3, 4), date(1933, 3, 4)),
+    (30, date(1923, 8, 2), date(1929, 3, 4)),
+    (29, date(1921, 3, 4), date(1923, 8, 2)),
+    (28, date(1913, 3, 4), date(1921, 3, 4)),
+    (27, date(1909, 3, 4), date(1913, 3, 4)),
+    (26, date(1901, 9, 14), date(1909, 3, 4)),
     #  … extend farther back as needed …
 ]
 
@@ -69,6 +65,7 @@ PRESIDENT_TERMS.sort(key=lambda t: t[1], reverse=True)
 # 2.  BASIC HELPERS
 # ---------------------------------------------------------------------------
 
+
 def _election_day(year: int) -> date:
     """
     Return the U.S. general Election Day for a given year:
@@ -76,7 +73,7 @@ def _election_day(year: int) -> date:
     """
     # First Monday in November
     first_monday = date(year, 11, 1)
-    while first_monday.weekday() != 0:   # 0 = Monday
+    while first_monday.weekday() != 0:  # 0 = Monday
         first_monday += timedelta(days=1)
     # Tuesday following that
     return first_monday + timedelta(days=1)
@@ -98,6 +95,7 @@ def _president_record(d: date) -> tuple[int, date]:
 # 3.  PUBLIC API FUNCTIONS
 # ---------------------------------------------------------------------------
 
+
 def president_number(d: date) -> int:
     """38 for Gerald Ford, 46 for Joe Biden, …"""
     return _president_record(d)[0]
@@ -118,7 +116,7 @@ def days_into_current_term(d: date) -> int:
     """1-based: inauguration day itself returns 1."""
     number, first_inaug = _president_record(d)
     term_idx = presidential_term_index(d)
-    term_start = first_inaug.replace(year=first_inaug.year + 4*(term_idx-1))
+    term_start = first_inaug.replace(year=first_inaug.year + 4 * (term_idx - 1))
     return (d - term_start).days + 1
 
 
@@ -145,9 +143,10 @@ def days_until_next_midterm_election(d: date) -> int:
 
 # ----------------  CONGRESS & SESSION  -------------------------------------
 
-CONGRESS_FIRST_YEAR = 1789   # First Congress began Mar-4-1789
-CONGRESS_START_MONTH_PRE20TH = 3   # March 4 before 1935
-CONGRESS_START_MONTH_20TH    = 1   # Jan   3 starting 1935
+CONGRESS_FIRST_YEAR = 1789  # First Congress began Mar-4-1789
+CONGRESS_START_MONTH_PRE20TH = 3  # March 4 before 1935
+CONGRESS_START_MONTH_20TH = 1  # Jan   3 starting 1935
+
 
 def congress_number(d: date) -> int:
     """
@@ -173,8 +172,8 @@ def congress_session(d: date) -> int:
         return 2
     else:
         return 3
-    
-    
+
+
 def self_test():
     """Output logging statements describing today's date as a sort of minimal self-test"""
     today = date.today()
@@ -207,19 +206,19 @@ def main(
 def normalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
     Normalize column names in a DataFrame: convert to lowercase and replace spaces with underscores.
-    
+
     Args:
         df: DataFrame to normalize
-        
+
     Returns:
         DataFrame with normalized column names
     """
     if df is None or df.empty:
         return df
-        
+
     # Create a mapping of old names to new names
-    column_mapping = {col: col.casefold().replace(' ', '_') for col in df.columns}
-    
+    column_mapping = {col: col.casefold().replace(" ", "_") for col in df.columns}
+
     # Rename columns using the mapping
     return df.rename(columns=column_mapping)
 
@@ -227,68 +226,68 @@ def normalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
 def normalize_all_dataframes(dataframes_dict: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     """
     Normalize column names for all DataFrames in a dictionary.
-    
+
     Args:
         dataframes_dict: Dictionary of DataFrames with string keys
-        
+
     Returns:
         Dictionary with same keys but DataFrames having normalized column names
     """
     normalized_dfs: Dict[str, pd.DataFrame] = {}
-    
+
     for name, df in dataframes_dict.items():
         if df is not None and not df.empty:
             normalized_dfs[name] = normalize_dataframe_columns(df)
         else:
             normalized_dfs[name] = df
-    
+
     return normalized_dfs
 
 
 def enrich_fjc_judges(judges_df: pd.DataFrame) -> pd.DataFrame:
     """
     Adds derived name fields to the FJC judges DataFrame.
-    
+
     Args:
         judges_df: FJC judges DataFrame with first_name, middle_name, last_name columns
-        
+
     Returns:
         DataFrame with additional name fields
     """
     # Create a copy to avoid modifying the original
     enriched_df = judges_df.copy()
-    
+
     # Check for column names - they might be differently named
-    first_col = next((col for col in enriched_df.columns if 'first' in col.lower()), None)
-    middle_col = next((col for col in enriched_df.columns if 'middle' in col.lower()), None)
-    last_col = next((col for col in enriched_df.columns if 'last' in col.lower()), None)
-    suffix_col = next((col for col in enriched_df.columns if 'suffix' in col.lower()), None)
-    
+    first_col = next((col for col in enriched_df.columns if "first" in col.lower()), None)
+    middle_col = next((col for col in enriched_df.columns if "middle" in col.lower()), None)
+    last_col = next((col for col in enriched_df.columns if "last" in col.lower()), None)
+    suffix_col = next((col for col in enriched_df.columns if "suffix" in col.lower()), None)
+
     if first_col and last_col:  # Minimum required fields
         # Create full name from components
         enriched_df["name_full"] = enriched_df.apply(
             lambda row: create_full_name_from_parts(
-                row.get(first_col), 
-                row.get(middle_col) if middle_col else None, 
+                row.get(first_col),
+                row.get(middle_col) if middle_col else None,
                 row.get(last_col),
-                row.get(suffix_col) if suffix_col else None
-            ), 
-            axis=1
+                row.get(suffix_col) if suffix_col else None,
+            ),
+            axis=1,
         )
-        
+
         # Add cleaned full name
         enriched_df["full_name_clean"] = enriched_df["name_full"].apply(clean_name)
-    
+
     return enriched_df
 
 
 def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
     """
     Load and prepare dataframes needed for feature engineering.
-    
+
     Args:
         raw_data_dir: Path to raw data directory
-        
+
     Returns:
         Dictionary of prepared dataframes
     """
@@ -298,15 +297,18 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
         fjc_federal_judicial_service = pd.read_csv(raw_data_dir / "federal_judicial_service.csv")
         fjc_demographics = pd.read_csv(raw_data_dir / "demographics.csv")
         fjc_education = pd.read_csv(raw_data_dir / "education.csv")
-        fjc_other_federal_judicial_service = pd.read_csv(raw_data_dir / "other_federal_judicial_service.csv")
+        fjc_other_federal_judicial_service = pd.read_csv(
+            raw_data_dir / "other_federal_judicial_service.csv"
+        )
         fjc_other_nominations_recess = pd.read_csv(raw_data_dir / "other_nominations_recess.csv")
         seat_timeline = pd.read_csv(raw_data_dir / "seat_timeline.csv")
         cong_nominees = pd.read_csv(raw_data_dir / "nominees.csv")
         cong_nominations = pd.read_csv(raw_data_dir / "nominations.csv")
-        
-        logger.info(f"Loaded {len(fjc_judges)} judges, {len(fjc_federal_judicial_service)} service records, "
-                    f"{len(cong_nominees)} congress nominees, {len(cong_nominations)} nominations")
-        
+
+        logger.info(
+            f"Loaded {len(fjc_judges)} judges, {len(fjc_federal_judicial_service)} service records, "
+            f"{len(cong_nominees)} congress nominees, {len(cong_nominations)} nominations"
+        )
 
         # Collect all dataframes into a dictionary
         all_dfs = {
@@ -318,12 +320,12 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
             "fjc_other_nominations_recess": fjc_other_nominations_recess,
             "seat_timeline": seat_timeline,
             "cong_nominees": cong_nominees,
-            "cong_nominations": cong_nominations
+            "cong_nominations": cong_nominations,
         }
-        
+
         # Normalize column names for all dataframes
         normalized_dfs = normalize_all_dataframes(all_dfs)
-        
+
         # Extract the normalized dataframes
         fjc_judges = normalized_dfs["fjc_judges"]
         fjc_federal_judicial_service = normalized_dfs["fjc_federal_judicial_service"]
@@ -334,13 +336,13 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
         seat_timeline = normalized_dfs["seat_timeline"]
         cong_nominees = normalized_dfs["cong_nominees"]
         cong_nominations = normalized_dfs["cong_nominations"]
-        
+
         # Enrich the nominees dataframe with name fields and court information from nominations
         enriched_nominees = enrich_congress_nominees_dataframe(cong_nominees, cong_nominations)
-        
+
         # Enrich the FJC judges dataframe with full name fields
         enriched_judges = enrich_fjc_judges(fjc_judges)
-        
+
         # Return all dataframes
         return {
             "fjc_judges": enriched_judges,
@@ -351,7 +353,7 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
             "fjc_other_nominations_recess": fjc_other_nominations_recess,
             "seat_timeline": seat_timeline,
             "cong_nominees": enriched_nominees,
-            "cong_nominations": cong_nominations
+            "cong_nominations": cong_nominations,
         }
     except Exception as e:
         logger.error(f"Error loading dataframes: {e}")
@@ -361,30 +363,30 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
 def extract_court_and_position(nominations_df: pd.DataFrame) -> pd.DataFrame:
     """
     Extract court and position information from nomination descriptions.
-    
+
     Args:
         nominations_df: Dataframe containing nomination data with 'description' field
-        
+
     Returns:
         DataFrame with additional extracted fields
     """
     result_df = nominations_df.copy()
-    
+
     # Extract court and position information from descriptions
     courts = []
     positions = []
     states = []
-    
+
     position_pattern = r"to be (?:a |an )?(.*?)(?: for| of| to)(?: the)? (.*?)(?:,|\.|\s+vice)"
     state_pattern = r"of (.*?)(?:,|\.|\s+to be)"
-    
+
     for desc in result_df["description"]:
         if pd.isna(desc):
             courts.append("")
             positions.append("")
             states.append("")
             continue
-            
+
         # Try to extract position and court
         pos_match = re.search(position_pattern, desc)
         if pos_match:
@@ -395,7 +397,7 @@ def extract_court_and_position(nominations_df: pd.DataFrame) -> pd.DataFrame:
         else:
             positions.append("")
             courts.append("")
-            
+
         # Try to extract state
         state_match = re.search(state_pattern, desc)
         if state_match:
@@ -403,41 +405,47 @@ def extract_court_and_position(nominations_df: pd.DataFrame) -> pd.DataFrame:
             states.append(state)
         else:
             states.append("")
-    
+
     # Add extracted fields to dataframe
     result_df["extracted_position"] = positions
     result_df["extracted_court"] = courts
     result_df["extracted_state"] = states
-    
+
     return result_df
 
 
-def analyze_match_failures(nominees_df: pd.DataFrame, threshold: int = 80) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+def analyze_match_failures(
+    nominees_df: pd.DataFrame, threshold: int = 80
+) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
     """
     Analyze records that didn't meet the match score threshold and provide
     explanations for why they might have failed to match.
-    
+
     Args:
         nominees_df: The nominees dataframe with match_score column
         threshold: The match score threshold used for determining matches
-        
+
     Returns:
         Tuple of (unmatched_df, reason_counts, examples)
     """
     # Identify unmatched records
-    unmatched = nominees_df[nominees_df["match_score"] < threshold].copy() if "match_score" in nominees_df.columns else nominees_df.copy()
-    
+    unmatched = (
+        nominees_df[nominees_df["match_score"] < threshold].copy()
+        if "match_score" in nominees_df.columns
+        else nominees_df.copy()
+    )
+
     if len(unmatched) == 0:
         logger.info("No unmatched records to analyze")
         return pd.DataFrame(), pd.DataFrame(), {}
-    
+
     # Add failure reason column
     reasons = []
     for _, row in unmatched.iterrows():
         if "match_score" not in nominees_df.columns:
             reasons.append("No match_score column present in dataframe")
             continue
-            
+
         if pd.isna(row.get("match_score")):
             reasons.append("No match attempt was made (match_score is NaN)")
         elif row["match_score"] == 0:
@@ -446,161 +454,246 @@ def analyze_match_failures(nominees_df: pd.DataFrame, threshold: int = 80) -> Tu
             reasons.append("Very low similarity - likely different person")
         else:
             # Score between 50 and threshold
-            reasons.append(f"Marginal match (score {row['match_score']:.1f}) - check name and court")
-    
+            reasons.append(
+                f"Marginal match (score {row['match_score']:.1f}) - check name and court"
+            )
+
     unmatched["failure_reason"] = reasons
-    
+
     # Count occurrences of each failure reason
     reason_counts = unmatched["failure_reason"].value_counts().reset_index()
     reason_counts.columns = ["Failure Reason", "Count"]
-    
+
     # Get examples for each failure reason
     examples = {}
     for reason in reason_counts["Failure Reason"].unique():
-        examples[reason] = unmatched[unmatched["failure_reason"] == reason].head(3)[["full_name", "court_clean", "match_score", "failure_reason"]]
-    
+        examples[reason] = unmatched[unmatched["failure_reason"] == reason].head(3)[
+            ["full_name", "court_clean", "match_score", "failure_reason"]
+        ]
+
     return unmatched, reason_counts, examples
 
 
-def is_nominee_confirmed(nominee_row: pd.Series, nominations_df: pd.DataFrame, citation_key: str = "citation") -> bool:
+def is_nominee_confirmed(
+    nominee_row: pd.Series, nominations_df: pd.DataFrame, citation_key: str = "citation"
+) -> bool:
     """
     Determine if a nominee was confirmed based on their latestaction in the nominations table.
-    
+
     Args:
         nominee_row: Row from nominees DataFrame containing citation
         nominations_df: DataFrame with nomination information including latestaction field
         citation_key: Column name for the citation in both DataFrames
-        
+
     Returns:
         Boolean indicating whether the nominee was confirmed
     """
     if citation_key not in nominee_row or pd.isna(nominee_row[citation_key]):
         return False
-        
+
     citation = nominee_row[citation_key]
     nomination_row = nominations_df[nominations_df[citation_key] == citation]
-    
+
     if nomination_row.empty:
         return False
-        
+
     # Get the latestaction field which contains a dict with 'actionDate' and 'text'
     latest_action = nomination_row.iloc[0].get("latestaction")
-    
+
     if not latest_action or not isinstance(latest_action, dict):
         return False
-        
+
     # Check if the text contains 'Confirmed'
     action_text = latest_action.get("text", "")
     return "Confirmed" in action_text
 
 
-def filter_confirmed_nominees(nominees_df: pd.DataFrame, nominations_df: pd.DataFrame, citation_key: str = "citation") -> pd.DataFrame:
+def filter_confirmed_nominees(
+    nominees_df: pd.DataFrame, nominations_df: pd.DataFrame, citation_key: str = "citation"
+) -> pd.DataFrame:
     """
     Filter the nominees DataFrame to only include confirmed nominees.
-    
+
     Args:
         nominees_df: DataFrame with nominee information
         nominations_df: DataFrame with nomination information including latestaction field
         citation_key: Column name for the citation in both DataFrames
-        
+
     Returns:
         DataFrame containing only confirmed nominees
     """
     # Apply the confirmation check to each row
     is_confirmed = nominees_df.apply(
-        lambda row: is_nominee_confirmed(row, nominations_df, citation_key),
-        axis=1
+        lambda row: is_nominee_confirmed(row, nominations_df, citation_key), axis=1
     )
-    
+
     # Filter the DataFrame
     confirmed_nominees = nominees_df[is_confirmed].copy()
-    logger.info(f"Filtered {len(nominees_df)} nominees to {len(confirmed_nominees)} confirmed nominees")
-    
+    logger.info(
+        f"Filtered {len(nominees_df)} nominees to {len(confirmed_nominees)} confirmed nominees"
+    )
+
     return confirmed_nominees
 
 
 def merge_nominees_with_nominations(
-    nominees_df: pd.DataFrame, 
-    nominations_df: pd.DataFrame,
-    join_key: str = "citation"
+    nominees_df: pd.DataFrame, nominations_df: pd.DataFrame, join_key: str = "citation"
 ) -> pd.DataFrame:
     """
     Merge nominees with their corresponding nominations.
-    
+
     Args:
         nominees_df: Dataframe with nominee information
         nominations_df: Dataframe with nomination information
         join_key: Key to use for joining the dataframes
-        
+
     Returns:
         Merged dataframe
     """
     if join_key not in nominees_df.columns or join_key not in nominations_df.columns:
         raise ValueError(f"Join key '{join_key}' not found in both dataframes")
-    
+
     # Extract court and position information
     enhanced_nominations = extract_court_and_position(nominations_df)
-    
+
     # Merge dataframes
     merged = nominees_df.merge(
-        enhanced_nominations,
-        on=join_key,
-        how="left",
-        suffixes=("_nominee", "_nomination")
+        enhanced_nominations, on=join_key, how="left", suffixes=("_nominee", "_nomination")
     )
-    
+
     return merged
 
 
 def filter_non_judicial_nominations(
-    nominations_df: pd.DataFrame, 
-    nominees_df: pd.DataFrame,
-    non_judicial_titles: list[str] = None
+    nominations_df: pd.DataFrame, nominees_df: pd.DataFrame, non_judicial_titles: list[str] = None
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Filter out non-judicial nominations based on position titles.
-    
+
     Args:
         nominations_df: DataFrame containing nomination records with 'nominee_positiontitle' and 'citation' columns
         nominees_df: DataFrame containing nominee records with 'citation' column
         non_judicial_titles: List of strings indicating non-judicial position titles
-        
+
     Returns:
         Tuple of (filtered_nominations_df, filtered_nominees_df)
     """
     if non_judicial_titles is None:
         non_judicial_titles = [
-            "Attorney", "Board", "Commission", "Director", "Marshal",
-            "Assistant", "Representative", "Secretary of", "Member of"
+            "Attorney",
+            "Board",
+            "Commission",
+            "Director",
+            "Marshal",
+            "Assistant",
+            "Representative",
+            "Secretary of",
+            "Member of",
         ]
-    
+
     # Make copies to avoid SettingWithCopyWarning
     nominations = nominations_df.copy()
     nominees = nominees_df.copy()
-    
+
     # Find citations of rows with non-judicial titles
     non_judicial_mask = nominations["nominee_positiontitle"].str.contains(
-        '|'.join(non_judicial_titles), 
-        na=False
+        "|".join(non_judicial_titles), na=False
     )
     citations_to_drop = nominations.loc[non_judicial_mask, "citation"].unique()
-    
+
     # Log the number of non-judicial nominations being removed
     logger.info(f"Found {len(citations_to_drop)} unique citations with non-judicial titles")
-    
+
     # Filter out the non-judicial nominations
     filtered_nominations = nominations[~nominations["citation"].isin(citations_to_drop)]
     filtered_nominees = nominees[~nominees["citation"].isin(citations_to_drop)]
-    
+
     # Log the results
     logger.info(
         f"Removed {len(nominations) - len(filtered_nominations)}/{len(nominations)} "
         f"non-judicial nominations and {len(nominees) - len(filtered_nominees)}/{len(nominees)} "
         "corresponding nominee records"
     )
-    
+
     return filtered_nominations, filtered_nominees
 
 
 if __name__ == "__main__":
     app()
+
+
+def clean_name(name: str) -> str:
+    """
+    Clean and normalize a name string.
+
+    Args:
+        name: Name string to clean
+
+    Returns:
+        Cleaned name string
+    """
+    if pd.isna(name):
+        return ""
+    name = str(name).upper()
+    name = re.sub(r"[\.,]", "", name)  # drop punctuation
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
+
+
+def split_name(name: str) -> Tuple[str, str, str]:
+    """
+    Very naive splitter: returns first, middle (maybe empty), last
+
+    Args:
+        name: Full name to split
+
+    Returns:
+        Tuple of (first_name, middle_name, last_name)
+    """
+    parts = clean_name(name).split()
+    if not parts:
+        return "", "", ""
+    if len(parts) == 1:
+        return parts[0], "", ""
+    if len(parts) == 2:
+        return parts[0], "", parts[1]
+    return parts[0], " ".join(parts[1:-1]), parts[-1]
+
+
+def create_full_name_from_parts(
+    first_name: Optional[str] = None,
+    middle_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+    suffix: Optional[str] = None,
+) -> str:
+    """
+    Creates a full name from individual name parts.
+
+    Args:
+        first_name: First name
+        middle_name: Middle name
+        last_name: Last name
+        suffix: Name suffix (e.g., Jr., Sr., III)
+
+    Returns:
+        Combined full name string
+    """
+    components = []
+
+    if first_name and not pd.isna(first_name):
+        components.append(str(first_name).strip())
+
+    if middle_name and not pd.isna(middle_name):
+        components.append(str(middle_name).strip())
+
+    if last_name and not pd.isna(last_name):
+        components.append(str(last_name).strip())
+
+    full_name = " ".join(components)
+
+    if suffix and not pd.isna(suffix):
+        suffix_str = str(suffix).strip()
+        if suffix_str:
+            full_name = f"{full_name} {suffix_str}"
+
+    return full_name

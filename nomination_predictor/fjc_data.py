@@ -15,6 +15,7 @@ import requests
 from tqdm import tqdm
 
 from nomination_predictor.config import EXTERNAL_DATA_DIR
+from nomination_predictor.features import normalize_dataframe_columns
 
 # FJC data file URLs from https://www.fjc.gov/history/judges/biographical-directory-article-iii-federal-judges-export
 FJC_DATA_URLS = {
@@ -95,26 +96,7 @@ def parse_fjc_date(date_str: str) -> Optional[pd.Timestamp]:
     return pd.NaT
 
 
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normalize column names by casefolding and replacing spaces with underscores.
-    
-    Args:
-        df: DataFrame with columns to normalize
-        
-    Returns:
-        DataFrame with normalized column names
-    """
-    # Create a column mapper: old_name -> new_name
-    column_map = {
-        col: col.lower().replace(' ', '_') for col in df.columns
-    }
-    
-    # Rename columns
-    return df.rename(columns=column_map)
-
-
-def load_fjc_csv(file_name: str, normalize: bool = True, date_columns: List[str] = None) -> pd.DataFrame:
+def load_fjc_csv(file_name: str, normalize_columns: bool = True, date_columns: List[str] = None) -> pd.DataFrame:
     """
     Load a FJC CSV file with optional column normalization and proper date parsing.
     
@@ -138,8 +120,8 @@ def load_fjc_csv(file_name: str, normalize: bool = True, date_columns: List[str]
     df = pd.read_csv(full_path)
     
     # Apply column normalization if requested
-    if normalize:
-        df = normalize_columns(df)
+    if normalize_columns:
+        df = normalize_dataframe_columns(df)
         
     # Auto-detect date columns if not specified
     if date_columns is None:
@@ -157,8 +139,8 @@ def load_fjc_csv(file_name: str, normalize: bool = True, date_columns: List[str]
             df = pd.read_csv(full_path, converters=converters)
             
             # Apply normalization again if needed
-            if normalize:
-                df = normalize_columns(df)
+            if normalize_columns:
+                df = normalize_dataframe_columns(df)
     
     return df
 
