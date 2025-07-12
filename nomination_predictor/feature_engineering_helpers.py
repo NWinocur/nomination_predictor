@@ -145,6 +145,56 @@ def extract_court_and_position(nominations_df: pd.DataFrame) -> pd.DataFrame:
     return result_df
 
 
+def analyze_match_failures(nominees_df: pd.DataFrame, threshold: int = 80) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """
+    Analyze records that didn't meet the match score threshold and provide
+    explanations for why they might have failed to match.
+    
+    Args:
+        nominees_df: The nominees dataframe with match_score column
+        threshold: The match score threshold used for determining matches
+        
+    Returns:
+        DataFrame with failure analysis information
+    """
+    # Identify unmatched records
+    unmatched = nominees_df[nominees_df["match_score"] < threshold].copy() if "match_score" in nominees_df.columns else nominees_df.copy()
+    
+    if len(unmatched) == 0:
+        logger.info("No unmatched records to analyze")
+        return pd.DataFrame()
+    
+    # Add failure reason column
+    reasons = []
+    for _, row in unmatched.iterrows():
+        if "match_score" not in nominees_df.columns:
+            reasons.append("No match_score column present in dataframe")
+            continue
+            
+        if pd.isna(row.get("match_score")):
+            reasons.append("No match attempt was made (match_score is NaN)")
+        elif row["match_score"] == 0:
+            reasons.append("No potential match candidates found")
+        elif row["match_score"] < 50:
+            reasons.append("Very low similarity - likely different person")
+        else:
+            # Score between 50 and threshold
+            reasons.append(f"Marginal match (score {row['match_score']:.1f}) - check name and court")
+    
+    unmatched["failure_reason"] = reasons
+    
+    # Count occurrences of each failure reason
+    reason_counts = unmatched["failure_reason"].value_counts().reset_index()
+    reason_counts.columns = ["Failure Reason", "Count"]
+    
+    # Get examples for each failure reason
+    examples = {}
+    for reason in reason_counts["Failure Reason"].unique():
+        examples[reason] = unmatched[unmatched["failure_reason"] == reason].head(3)[["full_name", "court_clean", "match_score", "failure_reason"]]
+    
+    return unmatched, reason_counts, examples
+
+
 def merge_nominees_with_nominations(
     nominees_df: pd.DataFrame, 
     nominations_df: pd.DataFrame,
