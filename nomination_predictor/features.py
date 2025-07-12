@@ -14,7 +14,7 @@ from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
 import re
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from loguru import logger
 import pandas as pd
@@ -204,6 +204,47 @@ def main(
     # -----------------------------------------
 
 
+def normalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize column names in a DataFrame: convert to lowercase and replace spaces with underscores.
+    
+    Args:
+        df: DataFrame to normalize
+        
+    Returns:
+        DataFrame with normalized column names
+    """
+    if df is None or df.empty:
+        return df
+        
+    # Create a mapping of old names to new names
+    column_mapping = {col: col.casefold().replace(' ', '_') for col in df.columns}
+    
+    # Rename columns using the mapping
+    return df.rename(columns=column_mapping)
+
+
+def normalize_all_dataframes(dataframes_dict: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+    """
+    Normalize column names for all DataFrames in a dictionary.
+    
+    Args:
+        dataframes_dict: Dictionary of DataFrames with string keys
+        
+    Returns:
+        Dictionary with same keys but DataFrames having normalized column names
+    """
+    normalized_dfs: Dict[str, pd.DataFrame] = {}
+    
+    for name, df in dataframes_dict.items():
+        if df is not None and not df.empty:
+            normalized_dfs[name] = normalize_dataframe_columns(df)
+        else:
+            normalized_dfs[name] = df
+    
+    return normalized_dfs
+
+
 def enrich_fjc_judges(judges_df: pd.DataFrame) -> pd.DataFrame:
     """
     Adds derived name fields to the FJC judges DataFrame.
@@ -254,12 +295,45 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
     try:
         # Load raw data
         fjc_judges = pd.read_csv(raw_data_dir / "judges.csv")
-        fjc_service = pd.read_csv(raw_data_dir / "federal_judicial_service.csv")
-        cong_nominees = pd.read_csv(raw_data_dir / "congress_nominees_cache.csv")
-        cong_nominations = pd.read_csv(raw_data_dir / "congress_nominations_cache.csv")
+        fjc_federal_judicial_service = pd.read_csv(raw_data_dir / "federal_judicial_service.csv")
+        fjc_demographics = pd.read_csv(raw_data_dir / "demographics.csv")
+        fjc_education = pd.read_csv(raw_data_dir / "education.csv")
+        fjc_other_federal_judicial_service = pd.read_csv(raw_data_dir / "other_federal_judicial_service.csv")
+        fjc_other_nominations_recess = pd.read_csv(raw_data_dir / "other_nominations_recess.csv")
+        seat_timeline = pd.read_csv(raw_data_dir / "seat_timeline.csv")
+        cong_nominees = pd.read_csv(raw_data_dir / "nominees.csv")
+        cong_nominations = pd.read_csv(raw_data_dir / "nominations.csv")
         
-        logger.info(f"Loaded {len(fjc_judges)} judges, {len(fjc_service)} service records, "
+        logger.info(f"Loaded {len(fjc_judges)} judges, {len(fjc_federal_judicial_service)} service records, "
                     f"{len(cong_nominees)} congress nominees, {len(cong_nominations)} nominations")
+        
+
+        # Collect all dataframes into a dictionary
+        all_dfs = {
+            "fjc_judges": fjc_judges,
+            "fjc_federal_judicial_service": fjc_federal_judicial_service,
+            "fjc_demographics": fjc_demographics,
+            "fjc_education": fjc_education,
+            "fjc_other_federal_judicial_service": fjc_other_federal_judicial_service,
+            "fjc_other_nominations_recess": fjc_other_nominations_recess,
+            "seat_timeline": seat_timeline,
+            "cong_nominees": cong_nominees,
+            "cong_nominations": cong_nominations
+        }
+        
+        # Normalize column names for all dataframes
+        normalized_dfs = normalize_all_dataframes(all_dfs)
+        
+        # Extract the normalized dataframes
+        fjc_judges = normalized_dfs["fjc_judges"]
+        fjc_federal_judicial_service = normalized_dfs["fjc_federal_judicial_service"]
+        fjc_demographics = normalized_dfs["fjc_demographics"]
+        fjc_education = normalized_dfs["fjc_education"]
+        fjc_other_federal_judicial_service = normalized_dfs["fjc_other_federal_judicial_service"]
+        fjc_other_nominations_recess = normalized_dfs["fjc_other_nominations_recess"]
+        seat_timeline = normalized_dfs["seat_timeline"]
+        cong_nominees = normalized_dfs["cong_nominees"]
+        cong_nominations = normalized_dfs["cong_nominations"]
         
         # Enrich the nominees dataframe with name fields and court information from nominations
         enriched_nominees = enrich_congress_nominees_dataframe(cong_nominees, cong_nominations)
@@ -270,7 +344,12 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
         # Return all dataframes
         return {
             "fjc_judges": enriched_judges,
-            "fjc_service": fjc_service,
+            "fjc_federal_judicial_service": fjc_federal_judicial_service,
+            "fjc_demographics": fjc_demographics,
+            "fjc_education": fjc_education,
+            "fjc_other_federal_judicial_service": fjc_other_federal_judicial_service,
+            "fjc_other_nominations_recess": fjc_other_nominations_recess,
+            "seat_timeline": seat_timeline,
             "cong_nominees": enriched_nominees,
             "cong_nominations": cong_nominations
         }
