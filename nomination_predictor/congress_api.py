@@ -181,19 +181,58 @@ def normalize_column_names(data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dictionary with normalized column names (lowercase, underscores)
     """
+    if not isinstance(data, dict):
+        return data
+        
     if not data:
         return {}
         
-    # Handle flat dictionary case
-    if isinstance(data, dict):
-        return {k.lower().replace(" ", "_"): v for k, v in data.items()}
-    
-    # If it's a list, normalize each item in the list
-    if isinstance(data, list):
-        return [normalize_column_names(item) for item in data]
+    # Convert camelCase or PascalCase to snake_case
+    normalized_data = {}
+    for key, value in data.items():
+        # Convert to lowercase
+        new_key = key.lower()
+        # Replace spaces with underscores
+        new_key = new_key.replace(" ", "_")
+        normalized_data[new_key] = value
         
-    # For other types, return as is
-    return data
+    return normalized_data
+
+
+def extract_nominee_data(nominee_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extract nominee-specific data from Congress.gov API nominee endpoint response,
+    preserving original values and structure. Only normalizes column names.
+    
+    Args:
+        nominee_data: Nominee data from Congress.gov API
+        
+    Returns:
+        Dictionary with nominee data and minimal transformations
+    """
+    logger.debug("Extracting nominee data from API response")
+    
+    # Create a record with original API data values
+    record = {}
+    
+    # Copy all non-nested fields directly
+    for key, value in nominee_data.items():
+        if not isinstance(value, (dict, list)) or key == 'nominees':
+            record[key] = value
+    
+    # Add citation as a correlatable field
+    if 'congress' in nominee_data and 'number' in nominee_data:
+        congress = nominee_data.get('congress')
+        number = nominee_data.get('number')
+        ordinal = nominee_data.get('ordinal', '1')
+        record['citation'] = f"PN{number}"
+        record['nominee_id'] = f"{congress}-{number}-{ordinal}"
+    
+    # Add source metadata
+    record['data_source'] = 'congress.gov_api_nominee'
+    record['retrieval_date'] = datetime.now().isoformat()
+    
+    return record
 
 
 def extract_nomination_data(nomination_data: Dict[str, Any], full_details: bool = False) -> List[Dict[str, Any]]:
@@ -477,6 +516,117 @@ class CongressAPIClient:
         response.raise_for_status()
         return response.json()
         
+    def get_nominee_data_from_url(self, nominee_url: str) -> Dict[str, Any]:
+        """
+        Fetch nominee-specific data from a nominee URL.
+        
+        Args:
+            nominee_url: URL to fetch nominee data from (e.g., https://api.congress.gov/v3/nomination/118/2012/1?format=json)
+            
+        Returns:
+            Dictionary with nominee data
+        """
+        logger.info(f"Fetching nominee data from URL: {nominee_url}")
+        
+        # Parse the URL to extract congress, nomination number, and ordinal
+        try:
+            # Extract path components to identify congress, nomination number, and ordinal
+            path_parts = urlparse(nominee_url).path.split('/')
+            # Format should be /v3/nomination/{congress}/{nomination_number}/{ordinal}
+            if len(path_parts) >= 6 and path_parts[1] == "v3" and path_parts[2] == "nomination":
+                congress = path_parts[3]
+                nomination_number = path_parts[4]
+                ordinal = path_parts[5]
+                logger.debug(f"Parsed nominee URL: congress={congress}, nomination_number={nomination_number}, ordinal={ordinal}")
+            else:
+                logger.warning(f"Nominee URL has unexpected format: {nominee_url}")
+                return {}
+        except Exception as e:
+            logger.error(f"Error parsing nominee URL {nominee_url}: {str(e)}")
+            return {}
+        
+        # Construct API URL with authorization
+        params = {"api_key": self.api_key, "format": "json"}
+        
+        try:
+            # Make the API request
+            response = requests.get(nominee_url.split('?')[0], params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Extract nominee data - could be under different keys depending on endpoint structure
+            nominee_data = {}
+            if "nominee" in data:
+                nominee_data = data["nominee"]
+            elif "nominees" in data:
+                # Handle different nominee structures
+                nominees = data["nominees"]
+                if isinstance(nominees, list) and nominees:
+                    nominee_data = nominees[0]
+                elif isinstance(nominees, dict):
+                    if "item" in nominees:
+                        items = nominees["item"]
+                        if isinstance(items, list) and items:
+                            nominee_data = items[0]
+                        elif isinstance(items, dict):
+                            nominee_data = items
+                    else:
+                        nominee_data = nominees
+            else:
+                # If no specific nominee key, use the whole response
+                nominee_data = data
+            
+            # Add context information
+            nominee_data['congress'] = congress
+            nominee_data['number'] = nomination_number
+            nominee_data['ordinal'] = ordinal
+            nominee_data['nominee_url'] = nominee_url
+            
+            return nominee_data
+        except Exception as e:
+            logger.error(f"Error fetching nominee data from {nominee_url}: {str(e)}")
+            return {}
+    
+    def get_all_nominees_data(self, nominations_df) -> List[Dict[str, Any]]:
+        """
+        Fetch nominee data for all nominations in a DataFrame that have nominee_url.
+        
+        Args:
+            nominations_df: DataFrame with nomination data including nominee_url field
+            
+        Returns:
+            List of nominee data dictionaries
+        """
+        logger.info(f"Fetching nominee data for {len(nominations_df)} nominations")
+        
+        nominees_data = []
+        
+        for i, row in enumerate(nominations_df.to_dict('records')):
+            if 'nominee_url' in row and row['nominee_url']:
+                try:
+                    logger.info(f"Processing nominee {i+1}/{len(nominations_df)}: {row.get('citation', 'Unknown')}")
+                    nominee_data = self.get_nominee_data_from_url(row['nominee_url'])
+                    
+                    if nominee_data:
+                        # Extract and normalize nominee data
+                        nominee_record = extract_nominee_data(nominee_data)
+                        
+                        # Add correlation fields from the nomination
+                        if 'citation' in row and 'citation' not in nominee_record:
+                            nominee_record['nomination_citation'] = row['citation']
+                        
+                        nominees_data.append(nominee_record)
+                        logger.info(f"Added nominee data for {row.get('citation', 'Unknown')}")
+                    else:
+                        logger.warning(f"No data retrieved for nominee URL: {row['nominee_url']}")
+                except Exception as e:
+                    logger.error(f"Error processing nominee {row.get('citation', 'Unknown')}: {str(e)}")
+            else:
+                logger.debug(f"No nominee_url for nomination {row.get('citation', 'Unknown')}")
+        
+        logger.info(f"Retrieved data for {len(nominees_data)} nominees")
+        return nominees_data
+
     def get_judicial_nominations(self, congress: int) -> List[Dict[str, Any]]:
         """
         Fetch and filter for judicial nominations from a single congress.
