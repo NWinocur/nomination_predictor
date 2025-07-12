@@ -220,7 +220,15 @@ def transform_nomination_data(nomination_data: Dict[str, Any], full_details: boo
         # Structure: {"nominees": [...]}
         nominees_data = nominees
     
-    if not nominees_data and "description" in nomination_data:
+    # Check if nominees_data contains actual nominee objects with first/last names
+    has_valid_nominees = False
+    for nominee in nominees_data:
+        if isinstance(nominee, dict) and (nominee.get("firstName") or nominee.get("lastName")):
+            has_valid_nominees = True
+            break
+    
+    # Process from description if no valid nominees found
+    if (not nominees_data or not has_valid_nominees) and "description" in nomination_data:
         # If no detailed nominee data available, create a single record from description
         description = nomination_data.get("description", "")
         base_record["description"] = description
@@ -249,7 +257,16 @@ def transform_nomination_data(nomination_data: Dict[str, Any], full_details: boo
             # Basic nominee info
             first_name = nominee.get("firstName", "")
             last_name = nominee.get("lastName", "")
-            nominee_record["nominee"] = f"{first_name} {last_name}".strip()
+            
+            # If we have a name from the nominee object, use it
+            if first_name or last_name:
+                nominee_record["nominee"] = f"{first_name} {last_name}".strip()
+            else:
+                # Try to extract from description as fallback
+                description = nomination_data.get("description", "")
+                name_match = re.search(r'^([^,]+),', description)
+                if name_match:
+                    nominee_record["nominee"] = name_match.group(1).strip()
             
             # Position info
             nominee_record["position_title"] = nominee.get("positionTitle", "")
