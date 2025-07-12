@@ -14,7 +14,7 @@ from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
 import re
-from typing import Dict, Optional, Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 from loguru import logger
 import pandas as pd
@@ -22,13 +22,12 @@ from tqdm import tqdm
 import typer
 
 from nomination_predictor.config import INTERIM_DATA_DIR, RAW_DATA_DIR
-from nomination_predictor.congress_api_utils import enrich_congress_nominees_dataframe
 
 app = typer.Typer()
 
 # ---------------------------------------------------------------------------
 # 1.  PRESIDENTIAL TERMS  (simple flat list; None = still in office)
-#    tuple = (president_number, first_inaug_date, last_day_in_office_or_None)
+#    tuple = (president_number, first_inauguration_date, last_day_in_office_or_None)
 # ---------------------------------------------------------------------------
 
 PRESIDENT_TERMS = [
@@ -82,7 +81,7 @@ def _election_day(year: int) -> date:
 @lru_cache(None)
 def _president_record(d: date) -> tuple[int, date]:
     """
-    Return (president_number, first_inaug_date_of_that_presidency)
+    Return (president_number, first_inauguration_date_of_that_presidency)
     for the date supplied.  Raises ValueError if out of range.
     """
     for number, start, end in PRESIDENT_TERMS:
@@ -106,17 +105,17 @@ def presidential_term_index(d: date) -> int:
     1 for the first four-year term of that president,
     2 for the second, 3/4 for FDR, etc.
     """
-    number, first_inaug = _president_record(d)
+    number, first_inauguration = _president_record(d)
     # Years (minus a day fudge) elapsed since first inauguration
-    years_elapsed = (d - first_inaug).days // 365.2425
+    years_elapsed = (d - first_inauguration).days // 365.2425
     return int(years_elapsed // 4) + 1
 
 
 def days_into_current_term(d: date) -> int:
     """1-based: inauguration day itself returns 1."""
-    number, first_inaug = _president_record(d)
+    number, first_inauguration = _president_record(d)
     term_idx = presidential_term_index(d)
-    term_start = first_inaug.replace(year=first_inaug.year + 4 * (term_idx - 1))
+    term_start = first_inauguration.replace(year=first_inauguration.year + 4 * (term_idx - 1))
     return (d - term_start).days + 1
 
 
@@ -310,8 +309,8 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
             f"{len(cong_nominees)} congress nominees, {len(cong_nominations)} nominations"
         )
 
-        # Collect all dataframes into a dictionary
-        all_dfs = {
+        # Return all dataframes
+        return {
             "fjc_judges": fjc_judges,
             "fjc_federal_judicial_service": fjc_federal_judicial_service,
             "fjc_demographics": fjc_demographics,
@@ -320,39 +319,6 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
             "fjc_other_nominations_recess": fjc_other_nominations_recess,
             "seat_timeline": seat_timeline,
             "cong_nominees": cong_nominees,
-            "cong_nominations": cong_nominations,
-        }
-
-        # Normalize column names for all dataframes
-        normalized_dfs = normalize_all_dataframes(all_dfs)
-
-        # Extract the normalized dataframes
-        fjc_judges = normalized_dfs["fjc_judges"]
-        fjc_federal_judicial_service = normalized_dfs["fjc_federal_judicial_service"]
-        fjc_demographics = normalized_dfs["fjc_demographics"]
-        fjc_education = normalized_dfs["fjc_education"]
-        fjc_other_federal_judicial_service = normalized_dfs["fjc_other_federal_judicial_service"]
-        fjc_other_nominations_recess = normalized_dfs["fjc_other_nominations_recess"]
-        seat_timeline = normalized_dfs["seat_timeline"]
-        cong_nominees = normalized_dfs["cong_nominees"]
-        cong_nominations = normalized_dfs["cong_nominations"]
-
-        # Enrich the nominees dataframe with name fields and court information from nominations
-        enriched_nominees = enrich_congress_nominees_dataframe(cong_nominees, cong_nominations)
-
-        # Enrich the FJC judges dataframe with full name fields
-        enriched_judges = enrich_fjc_judges(fjc_judges)
-
-        # Return all dataframes
-        return {
-            "fjc_judges": enriched_judges,
-            "fjc_federal_judicial_service": fjc_federal_judicial_service,
-            "fjc_demographics": fjc_demographics,
-            "fjc_education": fjc_education,
-            "fjc_other_federal_judicial_service": fjc_other_federal_judicial_service,
-            "fjc_other_nominations_recess": fjc_other_nominations_recess,
-            "seat_timeline": seat_timeline,
-            "cong_nominees": enriched_nominees,
             "cong_nominations": cong_nominations,
         }
     except Exception as e:
@@ -634,7 +600,7 @@ def clean_name(name: str) -> str:
     """
     if pd.isna(name):
         return ""
-    name = str(name).upper()
+    name = str(name).casefold()
     name = re.sub(r"[\.,]", "", name)  # drop punctuation
     name = re.sub(r"\s+", " ", name).strip()
     return name
@@ -697,3 +663,243 @@ def create_full_name_from_parts(
             full_name = f"{full_name} {suffix_str}"
 
     return full_name
+
+
+
+
+def extract_court_from_description(description: str) -> str:
+    """
+    Extract court information from nomination description.
+
+    Format typically follows: "Full name, of the US_state, to be a/an position_title
+    for/of the court_name, (for a/an optional term limit), vice predecessor_name, reason."
+
+    Args:
+        description: The nomination description text
+
+    Returns:
+        Extracted court name or empty string if not found
+    """
+    if pd.isna(description):
+        return ""
+
+    # Common patterns for court names in descriptions
+    court_patterns = [
+        r"to be (?:a |an )?(?:United States |U\.S\. )?(?:District |Circuit |Chief )?Judge for the (.*?(?:District|Circuit).*?)(?:,|\.|\s+for a| vice)",
+        r"to be (?:a |an )?(?:United States |U\.S\. )?(?:District |Circuit |Chief )?Judge of the (.*?(?:District|Circuit).*?)(?:,|\.|\s+for a| vice)",
+        r"to be (?:a |an )?(?:Judge|Justice) of the (.*?Court.*?)(?:,|\.|\s+for a| vice)",
+        r"to be (?:a |an )?(?:Associate|Chief) (?:Judge|Justice) of the (.*?Court.*?)(?:,|\.|\s+for a| vice)",
+    ]
+
+    # Try each pattern
+    for pattern in court_patterns:
+        match = re.search(pattern, description)
+        if match:
+            return match.group(1).strip()
+
+    # Fallback - look for any court reference
+    match = re.search(
+        r"(?:District|Circuit|Court|Tribunal) (?:of|for) (?:the )?([A-Za-z\s]+)", description
+    )
+    if match:
+        return match.group(0).strip()
+
+    return ""
+
+
+def enrich_congress_nominees_dataframe(
+    nominees_df: pd.DataFrame, nominations_df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Adds derived name fields to the Congress nominees DataFrame.
+
+    Args:
+        nominees_df: Congress nominees DataFrame with firstname, lastname, middlename columns
+        nominations_df: Nominations DataFrame to join for additional fields
+
+    Returns:
+        DataFrame with additional name fields
+    """
+    # Create a copy to avoid modifying the original
+    enriched_df = nominees_df.copy()
+
+    # Create full name from components
+    enriched_df["full_name"] = enriched_df.apply(
+        lambda row: create_full_name_from_parts(
+            row.get("firstname"), row.get("middlename"), row.get("lastname"), row.get("suffix")
+        ),
+        axis=1,
+    )
+
+    # Add cleaned full name
+    enriched_df["full_name_clean"] = enriched_df["full_name"].apply(clean_name)
+
+    # For backwards compatibility, ensure first/middle/last exist
+    # Note: We'll use the values from the API if they exist
+    if "first" not in enriched_df.columns:
+        enriched_df["first"] = enriched_df["firstname"].fillna("")
+
+    if "middle" not in enriched_df.columns:
+        enriched_df["middle"] = enriched_df["middlename"].fillna("")
+
+    if "last" not in enriched_df.columns:
+        enriched_df["last"] = enriched_df["lastname"].fillna("")
+
+    # If nominations dataframe is provided, merge relevant fields
+    if nominations_df is not None and "citation" in enriched_df.columns:
+        # Create a mapping from citation to relevant nomination fields
+        nom_info = {}
+        for _, row in nominations_df.iterrows():
+            if "citation" in row and "description" in row:
+                citation = row["citation"]
+                # Extract organization if available
+                org = row.get("nominee_organization", "")
+                if pd.isna(org) or not org:
+                    org = row.get("organization", "")
+
+                # Extract court from description
+                court_from_desc = extract_court_from_description(row["description"])
+
+                # Get received date (nomination date)
+                nomination_date = row.get("receiveddate", "")
+
+                nom_info[citation] = {
+                    "organization": org,
+                    "court_from_description": court_from_desc,
+                    "description": row["description"],
+                    "nomination_date": nomination_date,
+                }
+
+        # Add extracted fields
+        def get_nomination_info(citation, field):
+            if citation in nom_info:
+                return nom_info[citation].get(field, "")
+            return ""
+
+        enriched_df["organization"] = enriched_df["citation"].apply(
+            lambda c: get_nomination_info(c, "organization")
+        )
+
+        enriched_df["court_from_description"] = enriched_df["citation"].apply(
+            lambda c: get_nomination_info(c, "court_from_description")
+        )
+
+        enriched_df["nomination_description"] = enriched_df["citation"].apply(
+            lambda c: get_nomination_info(c, "description")
+        )
+
+        # Add nomination date
+        enriched_df["nomination_date"] = enriched_df["citation"].apply(
+            lambda c: get_nomination_info(c, "nomination_date")
+        )
+
+        # Add normalized court field - try to use court from description first, fall back to organization
+        enriched_df["court_clean"] = enriched_df.apply(
+            lambda row: normalized_court(row["court_from_description"])
+            if row.get("court_from_description")
+            else normalized_court(row.get("organization", "")),
+            axis=1,
+        )
+    elif "organization" in enriched_df.columns:
+        # If organization is directly in nominees_df (unlikely based on user's clarification)
+        enriched_df["court_clean"] = enriched_df["organization"].apply(normalized_court)
+
+    return enriched_df
+
+
+def normalized_court(text: str) -> str:
+    """
+    Normalizes court names for consistency.
+
+    Args:
+        text: Court name string
+
+    Returns:
+        Normalized court name
+    """
+    if pd.isna(text):
+        return ""
+    text = text.casefold().replace("UNITED STATES", "").replace("U.S.", "").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def left_join_fjc_dataframes(frames: Iterator[Tuple[str, pd.DataFrame]]) -> pd.DataFrame:
+    """
+    Left joins all dataframes whose names start with 'fjc' on the 'nid' column.
+    FIXME: Only the Judges and the Demographics dataframes are worth merging.  Others don't use nid uniquely and have time-series components which deserve more delicate handling than a naive left merge.
+    
+    Args:
+        frames: Frames dataclass containing all dataframes
+        
+    Returns:
+        Merged dataframe containing all fjc data
+    """
+    # Filter for only fjc dataframes
+    fjc_items = [(name, df) for name, df in frames if name.startswith('fjc')]
+    
+    if not fjc_items:
+        logger.warning("No FJC dataframes found to join")
+        return None
+    
+    # Check that all dataframes have 'nid' column
+    for name, df in fjc_items:
+        if 'nid' not in df.columns:
+            logger.error(f"DataFrame '{name}' missing required 'nid' column - cannot join")
+            return None
+    
+    # Start with the first dataframe
+    base_name, merged_df = fjc_items[0]
+    merged_df = merged_df.copy()
+    logger.info(f"Starting join with {base_name} ({len(merged_df)} rows)")
+    
+    # Track column origins to help with debugging
+    column_origins = {col: base_name for col in merged_df.columns}
+    
+    # Join each additional dataframe
+    for name, df in fjc_items[1:]:
+        # Find overlapping columns (except 'nid')
+        shared_cols = [col for col in merged_df.columns if col in df.columns and col != 'nid']
+        
+        # Check for consistency in shared columns
+        for col in shared_cols:
+            # Create temporary merge to check for inconsistencies
+            temp_merge = merged_df.merge(
+                df[['nid', col]], 
+                on='nid', 
+                how='inner', 
+                suffixes=('', f'_{name}')
+            )
+            
+            # Check if values are identical where both are non-null
+            inconsistent_mask = (
+                ~temp_merge[col].isna() & 
+                ~temp_merge[f"{col}_{name}"].isna() & 
+                (temp_merge[col] != temp_merge[f"{col}_{name}"])
+            )
+            
+            if inconsistent_mask.any():
+                inconsistent_count = inconsistent_mask.sum()
+                logger.warning(
+                    f"Found {inconsistent_count} inconsistent values for column '{col}' between "
+                    f"'{column_origins[col]}' and '{name}'. Using values from {column_origins[col]}."
+                )
+                # Optionally show examples of inconsistencies
+                if inconsistent_count > 0:
+                    examples = temp_merge[inconsistent_mask].head(3)
+                    logger.debug(f"Examples of inconsistencies in '{col}':\n{examples}")
+        
+        # Drop shared columns from right dataframe to avoid duplicates
+        right_df = df.drop(columns=[c for c in shared_cols])
+        
+        # Perform the left join
+        merged_df = merged_df.merge(right_df, on='nid', how='left')
+        
+        # Update column origins
+        for col in right_df.columns:
+            if col != 'nid':
+                column_origins[col] = name
+                
+        logger.info(f"Joined {name} - merged dataframe now has {len(merged_df)} rows, {len(merged_df.columns)} columns")
+    
+    return merged_df
