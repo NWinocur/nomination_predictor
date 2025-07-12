@@ -9,9 +9,12 @@ import pytest
 
 # Import the module to test
 from nomination_predictor.dataset import (
+    DataPipelineError,
+    check_id_uniqueness,
     parse_circuit_court,
     records_to_dataframe,
     save_dataframe_to_csv,
+    validate_dataframe_ids,
 )
 
 
@@ -188,3 +191,126 @@ def test_parse_circuit_court_trailing_dash():
     circuit, court = parse_circuit_court("09 - CA-")
     assert circuit == 9
     assert court == "CA-"
+
+
+# Tests for ID uniqueness checking
+@pytest.fixture
+def sample_fjc_df():
+    """Create a sample FJC DataFrame with 'nid' column."""
+    return pd.DataFrame({
+        'nid': ['123', '456', '789', '123', None],  # Duplicate '123' and one None
+        'name': ['Judge A', 'Judge B', 'Judge C', 'Judge A2', 'Unknown'],
+        'court': ['CA-N', 'CA-S', 'NY-E', 'CA-C', 'DC']
+    })
+
+
+@pytest.fixture
+def sample_congress_df():
+    """Create a sample Congress API DataFrame with 'citation' column."""
+    return pd.DataFrame({
+        'citation': ['PN123', 'PN456', 'PN789', 'PN123', None],  # Duplicate 'PN123' and one None
+        'nominee_name': ['Person A', 'Person B', 'Person C', 'Person A2', 'Unknown'],
+        'court': ['CA-N', 'CA-S', 'NY-E', 'CA-C', 'DC']
+    })
+
+
+@pytest.fixture
+def sample_hybrid_df():
+    """Create a DataFrame with both 'nid' and 'citation' columns."""
+    return pd.DataFrame({
+        'nid': ['123', '456', '789'],
+        'citation': ['PN123', 'PN456', 'PN789'],
+        'name': ['Judge A', 'Judge B', 'Judge C']
+    })
+
+
+@pytest.fixture
+def sample_missing_id_df():
+    """Create a DataFrame with neither 'nid' nor 'citation' columns."""
+    return pd.DataFrame({
+        'name': ['Judge A', 'Judge B', 'Judge C'],
+        'court': ['CA-N', 'CA-S', 'NY-E']
+    })
+
+
+def test_check_id_uniqueness_with_duplicates(sample_fjc_df):
+    """Test checking uniqueness when duplicates exist."""
+    result = check_id_uniqueness(sample_fjc_df, 'nid')
+    
+    assert result['is_unique'] is False
+    assert result['duplicate_count'] == 1
+    assert '123' in result['duplicate_values']
+    assert result['duplicate_values']['123'] == 2
+    assert len(result['duplicate_rows']) == 2  # Two rows with nid '123'
+
+
+def test_check_id_uniqueness_all_unique(sample_congress_df):
+    """Test checking uniqueness when all values are unique."""
+    # Remove the duplicate row for this test
+    unique_df = sample_congress_df[~sample_congress_df['citation'].duplicated()].copy()
+    
+    result = check_id_uniqueness(unique_df, 'citation')
+    
+    assert result['is_unique'] is True
+    assert result['duplicate_count'] == 0
+    assert len(result['duplicate_values']) == 0
+    assert len(result['duplicate_rows']) == 0
+
+
+def test_check_id_uniqueness_column_not_found():
+    """Test checking uniqueness when the column doesn't exist."""
+    df = pd.DataFrame({'name': ['A', 'B', 'C']})
+    
+    result = check_id_uniqueness(df, 'nonexistent_column')
+    
+    assert result['is_unique'] is True  # Default to True when column not found
+    assert result['duplicate_count'] == 0
+    
+
+def test_validate_dataframe_ids_fjc(sample_fjc_df):
+    """Test validating IDs with FJC DataFrame."""
+    dataframes = {'judges': sample_fjc_df}
+    results = validate_dataframe_ids(dataframes)
+    
+    assert 'judges' in results
+    assert results['judges']['is_unique'] is False  # Because of duplicate nid
+    
+
+def test_validate_dataframe_ids_congress(sample_congress_df):
+    """Test validating IDs with Congress DataFrame."""
+    dataframes = {'nominations': sample_congress_df}
+    results = validate_dataframe_ids(dataframes)
+    
+    assert 'nominations' in results
+    assert results['nominations']['is_unique'] is False  # Because of duplicate citation
+
+
+def test_validate_dataframe_ids_both_columns(sample_hybrid_df):
+    """Test validating IDs with DataFrame having both columns raises an error."""
+    dataframes = {'hybrid': sample_hybrid_df}
+    
+    with pytest.raises(DataPipelineError) as excinfo:
+        validate_dataframe_ids(dataframes)
+    
+    assert "both 'nid' and 'citation' columns" in str(excinfo.value)
+
+
+def test_validate_dataframe_ids_no_id_columns(sample_missing_id_df):
+    """Test validating IDs with DataFrame having neither column raises an error."""
+    dataframes = {'no_ids': sample_missing_id_df}
+    
+    with pytest.raises(DataPipelineError) as excinfo:
+        validate_dataframe_ids(dataframes)
+    
+    assert "neither 'nid' nor 'citation' columns" in str(excinfo.value)
+
+
+def test_validate_dataframe_ids_multiple_dataframes(sample_fjc_df, sample_congress_df):
+    """Test validating IDs across multiple DataFrames."""
+    dataframes = {'judges': sample_fjc_df, 'nominations': sample_congress_df}
+    results = validate_dataframe_ids(dataframes)
+    
+    assert 'judges' in results
+    assert 'nominations' in results
+    assert results['judges']['is_unique'] is False  # Duplicate nid
+    assert results['nominations']['is_unique'] is False  # Duplicate citation

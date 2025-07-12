@@ -315,7 +315,7 @@ class CongressAPIClient:
         if not self.api_key:
             raise ValueError("Congress.gov API key is required")
             
-    def get_nominations(self, congress: int, params: Dict[str, Any] = None) -> Dict[str, Any]:
+    def get_nominations(self, congress: int, params: Dict[str, Any] = None, auto_paginate:bool=True) -> Dict[str, Any]:
         """
         Fetch nominations for a specific congress with pagination support.
         
@@ -342,6 +342,7 @@ class CongressAPIClient:
         page = 1
         total_nominations = []
         
+        logger.info(f"{auto_paginate=}")
         while True:
             logger.info(f"Fetching page {page} for {congress}th Congress nominations")
             response = requests.get(url, params=default_params)
@@ -362,7 +363,7 @@ class CongressAPIClient:
             logger.info(f"Retrieved {len(current_nominations)} nominations from page {page}")
             
             # Check if there's a next page link
-            if "pagination" in current_page and "next" in current_page["pagination"]:
+            if "pagination" in current_page and "next" in current_page["pagination"] and auto_paginate:
                 # Extract the offset for the next page
                 next_link = current_page["pagination"]["next"]
                 if not next_link:
@@ -627,7 +628,7 @@ class CongressAPIClient:
         logger.info(f"Retrieved data for {len(nominees_data)} nominees")
         return nominees_data
 
-    def get_judicial_nominations(self, congress: int) -> List[Dict[str, Any]]:
+    def get_judicial_nominations(self, congress: int, auto_paginate:bool=True) -> List[Dict[str, Any]]:
         """
         Fetch and filter for judicial nominations from a single congress.
         
@@ -644,7 +645,7 @@ class CongressAPIClient:
         logger.info(f"Fetching judicial nominations for Congress {congress}")
         
         # First get all civilian nominations (exclude military)
-        all_nominations = self.get_nominations(congress, {"isCivilian": "true"})    
+        all_nominations = self.get_nominations(congress, {"isCivilian": "true"}, auto_paginate=auto_paginate)    
         
         if not all_nominations or "nominations" not in all_nominations:
             logger.warning(f"No nominations found for Congress {congress}")

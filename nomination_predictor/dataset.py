@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, TypedDict
 
+from IPython.display import display  # For notebook previews
 from loguru import logger
 import numpy as np
 import pandas as pd
@@ -24,10 +25,159 @@ from nomination_predictor.congress_api import CongressAPIClient
 app = typer.Typer()
 
 
+def build_and_validate_seat_timeline(service_df: pd.DataFrame, show_preview: bool = True) -> pd.DataFrame:
+    """
+    Build and validate seat timeline from service data.
+    
+    Args:
+        service_df: DataFrame containing federal judicial service records
+        show_preview: Whether to display a preview of the resulting DataFrame
+        
+    Returns:
+        pd.DataFrame: The built seat timeline
+        
+    Raises:
+        ValueError: If input data is invalid or building fails
+        TypeError: If input is not a pandas DataFrame
+    """
+    from nomination_predictor.fjc_data import build_seat_timeline as fjc_build_seat_timeline
+    
+    # Validate input
+    if service_df is None:
+        raise ValueError("Service DataFrame is None - no data provided")
+    if not isinstance(service_df, pd.DataFrame):
+        raise TypeError(f"Expected pandas DataFrame, got {type(service_df).__name__}")
+    if service_df.empty:
+        raise ValueError("Service DataFrame is empty - no records to process")
+    
+    try:
+        # Build the seat timeline
+        seat_timeline = fjc_build_seat_timeline(service_df)
+        
+        # Validate output
+        if not isinstance(seat_timeline, pd.DataFrame):
+            raise TypeError(
+                f"Expected build_seat_timeline() to return DataFrame, got {type(seat_timeline).__name__}"
+            )
+            
+        # Log success
+        logger.info(f"Successfully built seat timeline with {len(seat_timeline):,} records")
+        
+        # Show preview if requested and in a notebook environment
+        if show_preview and not seat_timeline.empty and 'IPython' in globals():
+            display(seat_timeline.head())
+            
+        return seat_timeline
+        
+    except Exception as e:
+        logger.error(f"Failed to build seat timeline: {e}")
+        raise  # Re-raise to ensure visibility in notebook
+
+
 class DataPipelineError(Exception):
     """Base exception for data pipeline errors."""
-
     pass
+
+
+class DuplicateIdError(DataPipelineError):
+    """Exception raised when duplicate ID fields are found."""
+    pass
+
+
+def check_id_uniqueness(df: pd.DataFrame, id_field: str) -> Dict[str, Any]:
+    """
+    Check if an ID field in a DataFrame contains unique values.
+    
+    Args:
+        df: The DataFrame to check
+        id_field: The name of the ID field to check (e.g., 'nid', 'citation')
+        
+    Returns:
+        Dict with keys:
+            'is_unique': bool indicating if the field contains only unique values
+            'duplicate_count': int count of duplicate values
+            'duplicate_values': dict mapping duplicate values to counts
+            'duplicate_rows': DataFrame containing only the rows with duplicate values
+    """
+    if id_field not in df.columns:
+        logger.warning(f"ID field '{id_field}' not found in DataFrame")
+        return {
+            'is_unique': True,
+            'duplicate_count': 0,
+            'duplicate_values': {},
+            'duplicate_rows': pd.DataFrame()
+        }
+        
+    # Check for and count duplicates
+    # First remove NaN values as they're not helpful for uniqueness checks
+    non_null_df = df[df[id_field].notna()]
+    value_counts = non_null_df[id_field].value_counts()
+    duplicates = value_counts[value_counts > 1]
+    
+    is_unique = len(duplicates) == 0
+    duplicate_count = len(duplicates)
+    
+    if not is_unique:
+        # Get rows with duplicate values
+        duplicate_values = {str(val): count for val, count in duplicates.items()}
+        duplicate_rows = non_null_df[non_null_df[id_field].isin(duplicates.index)]
+        
+        # Log warning
+        logger.warning(f"{duplicate_count} duplicate {id_field} values found")
+        for val, count in sorted(duplicate_values.items(), key=lambda x: x[1], reverse=True)[:5]:
+            logger.warning(f"  {val}: appears {count} times")
+        if len(duplicate_values) > 5:
+            logger.warning(f"  ... and {len(duplicate_values) - 5} more duplicate values")
+            
+        return {
+            'is_unique': False,
+            'duplicate_count': duplicate_count,
+            'duplicate_values': duplicate_values,
+            'duplicate_rows': duplicate_rows
+        }
+    else:
+        logger.info(f"All {id_field} values are unique")
+        return {
+            'is_unique': True,
+            'duplicate_count': 0,
+            'duplicate_values': {},
+            'duplicate_rows': pd.DataFrame()
+        }
+
+
+def validate_dataframe_ids(dataframes: Dict[str, pd.DataFrame]) -> Dict[str, Dict[str, Any]]:
+    """
+    Validate ID uniqueness across multiple dataframes based solely on column presence.
+    
+    Args:
+        dataframes: Dictionary mapping dataframe names to DataFrames
+        
+    Returns:
+        Dictionary with results of uniqueness checks for each DataFrame
+        
+    """
+    results = {}
+    
+    for name, df in dataframes.items():
+        has_nid = 'nid' in df.columns
+        has_citation = 'citation' in df.columns
+        
+        # Check for invalid column combinations
+        if has_nid and has_citation:
+            logger.warning(f"DataFrame '{name}' contains both 'nid' and 'citation' columns. Cannot determine source type.")
+        
+        if not has_nid and not has_citation:
+            logger.warning("DataFrame '{name}' contains neither 'nid' nor 'citation' columns. Cannot determine source type.")
+            
+        # Determine source type and check ID uniqueness
+        if has_nid:
+            logger.info(f"Checking 'nid' uniqueness for dataframe '{name}'")
+            results[name] = check_id_uniqueness(df, 'nid')
+        elif has_citation:
+            logger.info(f"Checking 'citation' uniqueness for dataframe '{name}'")
+            results[name] = check_id_uniqueness(df, 'citation')
+    
+    return results
 
 
 def records_to_dataframe(records: List[Dict[str, Any]]) -> pd.DataFrame:

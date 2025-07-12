@@ -12,9 +12,8 @@ from typing import Optional, Tuple
 from loguru import logger
 import pandas as pd
 
-from nomination_predictor.config import configure_logging
+from nomination_predictor.config import EXTERNAL_DATA_DIR, configure_logging
 from nomination_predictor.fjc_data import (
-    FJC_DATA_DIR,
     build_seat_timeline,
     get_predecessor_info,
     load_fjc_csv,
@@ -35,19 +34,19 @@ def validate_data_files() -> bool:
     missing = []
     
     for file in required_files:
-        if not (FJC_DATA_DIR / file).exists():
+        if not (EXTERNAL_DATA_DIR / file).exists():
             missing.append(file)
     
     if missing:
         logger.error(f"Missing required FJC data files: {missing}")
-        logger.error(f"Expected in: {FJC_DATA_DIR}")
+        logger.error(f"Expected in: {EXTERNAL_DATA_DIR}")
         return False
     
-    logger.info(f"All required FJC data files found in {FJC_DATA_DIR}")
+    logger.info(f"All required FJC data files found in {EXTERNAL_DATA_DIR}")
     
     # Report on optional files
     for file in optional_files:
-        if (FJC_DATA_DIR / file).exists():
+        if (EXTERNAL_DATA_DIR / file).exists():
             logger.info(f"Optional file found: {file}")
         else:
             logger.info(f"Optional file not found: {file}")
@@ -228,7 +227,7 @@ def run_tests() -> None:
     # Test processing with validation mode
     logger.info("Testing data processing in validation mode")
     seat_timeline_df, judges_df, predecessor_df = process_fjc_data(
-        output_dir=FJC_DATA_DIR,
+        output_dir=EXTERNAL_DATA_DIR,
         validate_mode=True
     )
     
@@ -245,8 +244,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Process FJC data files")
     parser.add_argument("--validate", action="store_true", help="Run in validation mode")
     parser.add_argument("--test", action="store_true", help="Run tests instead of processing")
-    parser.add_argument("--output", default=str(FJC_DATA_DIR), 
-                        help=f"Output directory (default: {FJC_DATA_DIR})")
+    parser.add_argument("--output", default=str(EXTERNAL_DATA_DIR), 
+                        help=f"Output directory (default: {EXTERNAL_DATA_DIR})")
     
     args = parser.parse_args()
     

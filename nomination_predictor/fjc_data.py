@@ -16,9 +16,6 @@ from tqdm import tqdm
 
 from nomination_predictor.config import EXTERNAL_DATA_DIR
 
-# Path constants
-FJC_DATA_DIR = EXTERNAL_DATA_DIR / "FederalJudicialCenter"  # Source directory for FJC data
-
 # FJC data file URLs from https://www.fjc.gov/history/judges/biographical-directory-article-iii-federal-judges-export
 FJC_DATA_URLS = {
     'judges.csv': 'https://www.fjc.gov/sites/default/files/history/judges.csv',
@@ -131,7 +128,7 @@ def load_fjc_csv(file_name: str, normalize: bool = True, date_columns: List[str]
     """
     # Ensure we're dealing with string paths for consistency
     if isinstance(file_name, str):
-        full_path = os.path.join(FJC_DATA_DIR, file_name)
+        full_path = os.path.join(EXTERNAL_DATA_DIR, file_name)
     else:  # Assume it's a Path object
         full_path = file_name
     
@@ -277,7 +274,7 @@ def download_fjc_file(file_name: str, force: bool = False) -> bool:
         return False
     
     # Create the destination path
-    dest_path = FJC_DATA_DIR / file_name
+    dest_path = EXTERNAL_DATA_DIR / file_name
     
     # Check if the file already exists
     if dest_path.exists() and not force:
@@ -285,7 +282,7 @@ def download_fjc_file(file_name: str, force: bool = False) -> bool:
         return True
     
     # Create the directory if it doesn't exist
-    os.makedirs(FJC_DATA_DIR, exist_ok=True)
+    os.makedirs(EXTERNAL_DATA_DIR, exist_ok=True)
     
     # Get the URL for this file
     url = FJC_DATA_URLS[file_name]
@@ -338,7 +335,7 @@ def ensure_fjc_data_files(required_only: bool = False) -> Tuple[List[str], List[
     
     # Check and download required files
     for file_name in REQUIRED_FJC_FILES:
-        if not (FJC_DATA_DIR / file_name).exists():
+        if not (EXTERNAL_DATA_DIR / file_name).exists():
             success = download_fjc_file(file_name)
             if success:
                 downloaded.append(file_name)
@@ -348,7 +345,7 @@ def ensure_fjc_data_files(required_only: bool = False) -> Tuple[List[str], List[
     # Check and download optional files if requested
     if not required_only:
         for file_name in OPTIONAL_FJC_FILES:
-            if not (FJC_DATA_DIR / file_name).exists():
+            if not (EXTERNAL_DATA_DIR / file_name).exists():
                 success = download_fjc_file(file_name)
                 if success:
                     downloaded.append(file_name)

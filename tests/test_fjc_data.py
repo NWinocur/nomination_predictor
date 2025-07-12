@@ -60,7 +60,7 @@ class TestFjcDateParsing(unittest.TestCase):
         self.assertTrue(pd.isna(parse_fjc_date("1889-13-15")))  # More months than in a year
 
 
-@patch('nomination_predictor.fjc_data.FJC_DATA_DIR')
+@patch('nomination_predictor.fjc_data.EXTERNAL_DATA_DIR')
 class TestLoadFjcCsv(unittest.TestCase):
     """Test loading FJC CSV files."""
     

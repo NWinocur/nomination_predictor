@@ -13,12 +13,20 @@ Given a nomination is on record as having occurred on a specified date, when fil
 from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
+import re
+from typing import Dict, Tuple
 
 from loguru import logger
+import pandas as pd
 from tqdm import tqdm
 import typer
 
-from nomination_predictor.config import PROCESSED_DATA_DIR
+from nomination_predictor.config import INTERIM_DATA_DIR, RAW_DATA_DIR
+from nomination_predictor.congress_api_utils import (
+    clean_name,
+    create_full_name_from_parts,
+    enrich_congress_nominees_dataframe,
+)
 
 app = typer.Typer()
 
@@ -183,8 +191,8 @@ def self_test():
 @app.command()
 def main(
     # ---- REPLACE DEFAULT PATHS AS APPROPRIATE ----
-    input_path: Path = PROCESSED_DATA_DIR / "dataset.csv",
-    output_path: Path = PROCESSED_DATA_DIR / "features.csv",
+    input_path: Path = RAW_DATA_DIR / "dataset.csv",
+    output_path: Path = INTERIM_DATA_DIR / "features.csv",
     # -----------------------------------------
 ):
     # ---- REPLACE THIS WITH YOUR OWN CODE ----
@@ -194,6 +202,325 @@ def main(
             logger.info("Something happened for iteration 5.")
     logger.success("Features generation complete.")
     # -----------------------------------------
+
+
+def enrich_fjc_judges(judges_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds derived name fields to the FJC judges DataFrame.
+    
+    Args:
+        judges_df: FJC judges DataFrame with first_name, middle_name, last_name columns
+        
+    Returns:
+        DataFrame with additional name fields
+    """
+    # Create a copy to avoid modifying the original
+    enriched_df = judges_df.copy()
+    
+    # Check for column names - they might be differently named
+    first_col = next((col for col in enriched_df.columns if 'first' in col.lower()), None)
+    middle_col = next((col for col in enriched_df.columns if 'middle' in col.lower()), None)
+    last_col = next((col for col in enriched_df.columns if 'last' in col.lower()), None)
+    suffix_col = next((col for col in enriched_df.columns if 'suffix' in col.lower()), None)
+    
+    if first_col and last_col:  # Minimum required fields
+        # Create full name from components
+        enriched_df["name_full"] = enriched_df.apply(
+            lambda row: create_full_name_from_parts(
+                row.get(first_col), 
+                row.get(middle_col) if middle_col else None, 
+                row.get(last_col),
+                row.get(suffix_col) if suffix_col else None
+            ), 
+            axis=1
+        )
+        
+        # Add cleaned full name
+        enriched_df["full_name_clean"] = enriched_df["name_full"].apply(clean_name)
+    
+    return enriched_df
+
+
+def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
+    """
+    Load and prepare dataframes needed for feature engineering.
+    
+    Args:
+        raw_data_dir: Path to raw data directory
+        
+    Returns:
+        Dictionary of prepared dataframes
+    """
+    try:
+        # Load raw data
+        fjc_judges = pd.read_csv(raw_data_dir / "judges.csv")
+        fjc_service = pd.read_csv(raw_data_dir / "federal_judicial_service.csv")
+        cong_nominees = pd.read_csv(raw_data_dir / "congress_nominees_cache.csv")
+        cong_nominations = pd.read_csv(raw_data_dir / "congress_nominations_cache.csv")
+        
+        logger.info(f"Loaded {len(fjc_judges)} judges, {len(fjc_service)} service records, "
+                    f"{len(cong_nominees)} congress nominees, {len(cong_nominations)} nominations")
+        
+        # Enrich the nominees dataframe with name fields and court information from nominations
+        enriched_nominees = enrich_congress_nominees_dataframe(cong_nominees, cong_nominations)
+        
+        # Enrich the FJC judges dataframe with full name fields
+        enriched_judges = enrich_fjc_judges(fjc_judges)
+        
+        # Return all dataframes
+        return {
+            "fjc_judges": enriched_judges,
+            "fjc_service": fjc_service,
+            "cong_nominees": enriched_nominees,
+            "cong_nominations": cong_nominations
+        }
+    except Exception as e:
+        logger.error(f"Error loading dataframes: {e}")
+        raise
+
+
+def extract_court_and_position(nominations_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Extract court and position information from nomination descriptions.
+    
+    Args:
+        nominations_df: Dataframe containing nomination data with 'description' field
+        
+    Returns:
+        DataFrame with additional extracted fields
+    """
+    result_df = nominations_df.copy()
+    
+    # Extract court and position information from descriptions
+    courts = []
+    positions = []
+    states = []
+    
+    position_pattern = r"to be (?:a |an )?(.*?)(?: for| of| to)(?: the)? (.*?)(?:,|\.|\s+vice)"
+    state_pattern = r"of (.*?)(?:,|\.|\s+to be)"
+    
+    for desc in result_df["description"]:
+        if pd.isna(desc):
+            courts.append("")
+            positions.append("")
+            states.append("")
+            continue
+            
+        # Try to extract position and court
+        pos_match = re.search(position_pattern, desc)
+        if pos_match:
+            position = pos_match.group(1).strip()
+            court = pos_match.group(2).strip()
+            positions.append(position)
+            courts.append(court)
+        else:
+            positions.append("")
+            courts.append("")
+            
+        # Try to extract state
+        state_match = re.search(state_pattern, desc)
+        if state_match:
+            state = state_match.group(1).strip()
+            states.append(state)
+        else:
+            states.append("")
+    
+    # Add extracted fields to dataframe
+    result_df["extracted_position"] = positions
+    result_df["extracted_court"] = courts
+    result_df["extracted_state"] = states
+    
+    return result_df
+
+
+def analyze_match_failures(nominees_df: pd.DataFrame, threshold: int = 80) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
+    """
+    Analyze records that didn't meet the match score threshold and provide
+    explanations for why they might have failed to match.
+    
+    Args:
+        nominees_df: The nominees dataframe with match_score column
+        threshold: The match score threshold used for determining matches
+        
+    Returns:
+        Tuple of (unmatched_df, reason_counts, examples)
+    """
+    # Identify unmatched records
+    unmatched = nominees_df[nominees_df["match_score"] < threshold].copy() if "match_score" in nominees_df.columns else nominees_df.copy()
+    
+    if len(unmatched) == 0:
+        logger.info("No unmatched records to analyze")
+        return pd.DataFrame(), pd.DataFrame(), {}
+    
+    # Add failure reason column
+    reasons = []
+    for _, row in unmatched.iterrows():
+        if "match_score" not in nominees_df.columns:
+            reasons.append("No match_score column present in dataframe")
+            continue
+            
+        if pd.isna(row.get("match_score")):
+            reasons.append("No match attempt was made (match_score is NaN)")
+        elif row["match_score"] == 0:
+            reasons.append("No potential match candidates found")
+        elif row["match_score"] < 50:
+            reasons.append("Very low similarity - likely different person")
+        else:
+            # Score between 50 and threshold
+            reasons.append(f"Marginal match (score {row['match_score']:.1f}) - check name and court")
+    
+    unmatched["failure_reason"] = reasons
+    
+    # Count occurrences of each failure reason
+    reason_counts = unmatched["failure_reason"].value_counts().reset_index()
+    reason_counts.columns = ["Failure Reason", "Count"]
+    
+    # Get examples for each failure reason
+    examples = {}
+    for reason in reason_counts["Failure Reason"].unique():
+        examples[reason] = unmatched[unmatched["failure_reason"] == reason].head(3)[["full_name", "court_clean", "match_score", "failure_reason"]]
+    
+    return unmatched, reason_counts, examples
+
+
+def is_nominee_confirmed(nominee_row: pd.Series, nominations_df: pd.DataFrame, citation_key: str = "citation") -> bool:
+    """
+    Determine if a nominee was confirmed based on their latestaction in the nominations table.
+    
+    Args:
+        nominee_row: Row from nominees DataFrame containing citation
+        nominations_df: DataFrame with nomination information including latestaction field
+        citation_key: Column name for the citation in both DataFrames
+        
+    Returns:
+        Boolean indicating whether the nominee was confirmed
+    """
+    if citation_key not in nominee_row or pd.isna(nominee_row[citation_key]):
+        return False
+        
+    citation = nominee_row[citation_key]
+    nomination_row = nominations_df[nominations_df[citation_key] == citation]
+    
+    if nomination_row.empty:
+        return False
+        
+    # Get the latestaction field which contains a dict with 'actionDate' and 'text'
+    latest_action = nomination_row.iloc[0].get("latestaction")
+    
+    if not latest_action or not isinstance(latest_action, dict):
+        return False
+        
+    # Check if the text contains 'Confirmed'
+    action_text = latest_action.get("text", "")
+    return "Confirmed" in action_text
+
+
+def filter_confirmed_nominees(nominees_df: pd.DataFrame, nominations_df: pd.DataFrame, citation_key: str = "citation") -> pd.DataFrame:
+    """
+    Filter the nominees DataFrame to only include confirmed nominees.
+    
+    Args:
+        nominees_df: DataFrame with nominee information
+        nominations_df: DataFrame with nomination information including latestaction field
+        citation_key: Column name for the citation in both DataFrames
+        
+    Returns:
+        DataFrame containing only confirmed nominees
+    """
+    # Apply the confirmation check to each row
+    is_confirmed = nominees_df.apply(
+        lambda row: is_nominee_confirmed(row, nominations_df, citation_key),
+        axis=1
+    )
+    
+    # Filter the DataFrame
+    confirmed_nominees = nominees_df[is_confirmed].copy()
+    logger.info(f"Filtered {len(nominees_df)} nominees to {len(confirmed_nominees)} confirmed nominees")
+    
+    return confirmed_nominees
+
+
+def merge_nominees_with_nominations(
+    nominees_df: pd.DataFrame, 
+    nominations_df: pd.DataFrame,
+    join_key: str = "citation"
+) -> pd.DataFrame:
+    """
+    Merge nominees with their corresponding nominations.
+    
+    Args:
+        nominees_df: Dataframe with nominee information
+        nominations_df: Dataframe with nomination information
+        join_key: Key to use for joining the dataframes
+        
+    Returns:
+        Merged dataframe
+    """
+    if join_key not in nominees_df.columns or join_key not in nominations_df.columns:
+        raise ValueError(f"Join key '{join_key}' not found in both dataframes")
+    
+    # Extract court and position information
+    enhanced_nominations = extract_court_and_position(nominations_df)
+    
+    # Merge dataframes
+    merged = nominees_df.merge(
+        enhanced_nominations,
+        on=join_key,
+        how="left",
+        suffixes=("_nominee", "_nomination")
+    )
+    
+    return merged
+
+
+def filter_non_judicial_nominations(
+    nominations_df: pd.DataFrame, 
+    nominees_df: pd.DataFrame,
+    non_judicial_titles: list[str] = None
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Filter out non-judicial nominations based on position titles.
+    
+    Args:
+        nominations_df: DataFrame containing nomination records with 'nominee_positiontitle' and 'citation' columns
+        nominees_df: DataFrame containing nominee records with 'citation' column
+        non_judicial_titles: List of strings indicating non-judicial position titles
+        
+    Returns:
+        Tuple of (filtered_nominations_df, filtered_nominees_df)
+    """
+    if non_judicial_titles is None:
+        non_judicial_titles = [
+            "Attorney", "Board", "Commission", "Director", "Marshal",
+            "Assistant", "Representative", "Secretary of", "Member of"
+        ]
+    
+    # Make copies to avoid SettingWithCopyWarning
+    nominations = nominations_df.copy()
+    nominees = nominees_df.copy()
+    
+    # Find citations of rows with non-judicial titles
+    non_judicial_mask = nominations["nominee_positiontitle"].str.contains(
+        '|'.join(non_judicial_titles), 
+        na=False
+    )
+    citations_to_drop = nominations.loc[non_judicial_mask, "citation"].unique()
+    
+    # Log the number of non-judicial nominations being removed
+    logger.info(f"Found {len(citations_to_drop)} unique citations with non-judicial titles")
+    
+    # Filter out the non-judicial nominations
+    filtered_nominations = nominations[~nominations["citation"].isin(citations_to_drop)]
+    filtered_nominees = nominees[~nominees["citation"].isin(citations_to_drop)]
+    
+    # Log the results
+    logger.info(
+        f"Removed {len(nominations) - len(filtered_nominations)}/{len(nominations)} "
+        f"non-judicial nominations and {len(nominees) - len(filtered_nominees)}/{len(nominees)} "
+        "corresponding nominee records"
+    )
+    
+    return filtered_nominations, filtered_nominees
 
 
 if __name__ == "__main__":
