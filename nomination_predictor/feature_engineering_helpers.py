@@ -68,13 +68,13 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
         fjc_judges = pd.read_csv(raw_data_dir / "judges.csv")
         fjc_service = pd.read_csv(raw_data_dir / "federal_judicial_service.csv")
         cong_nominees = pd.read_csv(raw_data_dir / "congress_nominees_cache.csv")
-        cong_noms = pd.read_csv(raw_data_dir / "congress_nominations_cache.csv")
+        cong_nominations = pd.read_csv(raw_data_dir / "congress_nominations_cache.csv")
         
         logger.info(f"Loaded {len(fjc_judges)} judges, {len(fjc_service)} service records, "
-                    f"{len(cong_nominees)} congress nominees, {len(cong_noms)} nominations")
+                    f"{len(cong_nominees)} congress nominees, {len(cong_nominations)} nominations")
         
         # Enrich the nominees dataframe with name fields and court information from nominations
-        enriched_nominees = enrich_congress_nominees_dataframe(cong_nominees, cong_noms)
+        enriched_nominees = enrich_congress_nominees_dataframe(cong_nominees, cong_nominations)
         
         # Enrich the FJC judges dataframe with full name fields
         enriched_judges = enrich_fjc_judges(fjc_judges)
@@ -84,7 +84,7 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
             "fjc_judges": enriched_judges,
             "fjc_service": fjc_service,
             "cong_nominees": enriched_nominees,
-            "cong_noms": cong_noms
+            "cong_nominations": cong_nominations
         }
     except Exception as e:
         logger.error(f"Error loading dataframes: {e}")
