@@ -824,82 +824,202 @@ def normalized_court(text: str) -> str:
     return text
 
 
-def left_join_fjc_dataframes(frames: Iterator[Tuple[str, pd.DataFrame]]) -> pd.DataFrame:
+def snapshot_education(education_df: pd.DataFrame, nid: str, cutoff_date: date) -> Dict[str, str]:
     """
-    Left joins all dataframes whose names start with 'fjc' on the 'nid' column.
-    FIXME: Only the Judges and the Demographics dataframes are worth merging.  Others don't use nid uniquely and have time-series components which deserve more delicate handling than a naive left merge.
+    Return highest degree information for a judge prior to cutoff date.
     
     Args:
-        frames: Frames dataclass containing all dataframes
+        education_df: Education dataframe with nid, sequence, degree, school, degree_year
+        nid: Judge's NID to filter by
+        cutoff_date: Only consider education completed by this date
         
     Returns:
-        Merged dataframe containing all fjc data
+        Dictionary with highest degree and school information
     """
-    # Filter for only fjc dataframes
-    fjc_items = [(name, df) for name, df in frames if name.startswith('fjc')]
+    # Filter by NID
+    edu = education_df[education_df["nid"] == nid].copy()
     
-    if not fjc_items:
-        logger.warning("No FJC dataframes found to join")
-        return None
+    if edu.empty:
+        return {"highest_degree": "", "highest_degree_school": "", "highest_degree_year": None}
     
-    # Check that all dataframes have 'nid' column
-    for name, df in fjc_items:
-        if 'nid' not in df.columns:
-            logger.error(f"DataFrame '{name}' missing required 'nid' column - cannot join")
-            return None
+    # Convert degree_year to integer and ensure it's before cutoff_date
+    edu["degree_year"] = pd.to_numeric(edu["degree_year"], errors="coerce")
+    edu = edu.dropna(subset=["degree_year"])
+    edu = edu[edu["degree_year"] <= cutoff_date.year]
     
-    # Start with the first dataframe
-    base_name, merged_df = fjc_items[0]
-    merged_df = merged_df.copy()
-    logger.info(f"Starting join with {base_name} ({len(merged_df)} rows)")
-    
-    # Track column origins to help with debugging
-    column_origins = {col: base_name for col in merged_df.columns}
-    
-    # Join each additional dataframe
-    for name, df in fjc_items[1:]:
-        # Find overlapping columns (except 'nid')
-        shared_cols = [col for col in merged_df.columns if col in df.columns and col != 'nid']
+    if edu.empty:
+        return {"highest_degree": "", "highest_degree_school": "", "highest_degree_year": None}
         
-        # Check for consistency in shared columns
-        for col in shared_cols:
-            # Create temporary merge to check for inconsistencies
-            temp_merge = merged_df.merge(
-                df[['nid', col]], 
-                on='nid', 
-                how='inner', 
-                suffixes=('', f'_{name}')
-            )
+    # Map degree types to numerical levels for sorting
+    degree_levels = {
+        "J.D.": 5,    # Juris Doctor
+        "LL.M.": 5,   # Master of Laws
+        "LL.B.": 4,   # Bachelor of Laws
+        "Ph.D.": 6,   # Doctorate
+        "S.J.D.": 6,  # Doctor of Juridical Science
+        "M.D.": 5,    # Medical Doctor
+        "M.A.": 3,    # Master of Arts
+        "M.S.": 3,    # Master of Science
+        "M.B.A.": 3,  # Master of Business Administration
+        "B.A.": 2,    # Bachelor of Arts
+        "B.S.": 2,    # Bachelor of Science
+        "A.A.": 1,    # Associate of Arts
+        "A.S.": 1     # Associate of Science
+    }
+    
+    # Apply degree level mapping (default to 0 if not found)
+    edu["degree_level"] = edu["degree"].apply(lambda d: next((level for deg, level in degree_levels.items() 
+                                           if deg.lower() in str(d).lower()), 0))
+    
+    # Sort by degree level (highest first), then by year (most recent first), then by sequence
+    edu = edu.sort_values(["degree_level", "degree_year", "sequence"], 
+                         ascending=[False, False, False])
+    
+    # Get highest degree
+    top = edu.iloc[0]
+    
+    return {
+        "highest_degree": str(top["degree"]),
+        "highest_degree_school": str(top["school"]),
+        "highest_degree_year": int(top["degree_year"]) if not pd.isna(top["degree_year"]) else None,
+        "has_law_degree": any("j.d." in str(d).lower() or "ll.b." in str(d).lower() 
+                            for d in edu["degree"])
+    }
+
+
+def extract_years_from_career(career_text: str) -> Tuple[Optional[int], Optional[int]]:
+    """
+    Extract start and end years from career text description.
+    
+    Args:
+        career_text: Text description of career position with years
+        
+    Returns:
+        Tuple of (start_year, end_year) - end_year may be None for current positions
+    """
+    if pd.isna(career_text):
+        return None, None
+        
+    # Pattern for years at end of text (e.g., "1990-1995" or "1990-present" or "2000-")
+    year_pattern = r'(\d{4})(?:-(\d{4}|present|\s*))$'
+    match = re.search(year_pattern, career_text)
+    
+    if match:
+        start_year = int(match.group(1))
+        end_year_str = match.group(2) if match.group(2) else None
+        
+        if end_year_str and end_year_str.isdigit():
+            end_year = int(end_year_str)
+        else:
+            # Handle "present" or missing end year as current year
+            end_year = None
+        return start_year, end_year
+        
+    # Alternative pattern when years are comma-separated (e.g., "Law clerk, Judge Smith, 1990-1991")
+    alt_pattern = r'(\d{4})-(\d{4}|present)'
+    match = re.search(alt_pattern, career_text)
+    
+    if match:
+        start_year = int(match.group(1))
+        end_year_str = match.group(2)
+        end_year = int(end_year_str) if end_year_str.isdigit() else None
+        return start_year, end_year
+        
+    return None, None
+
+
+def snapshot_career(career_df: pd.DataFrame, nid: str, cutoff_date: date) -> Dict[str, any]:
+    """
+    Compute career snapshot features for a judge prior to cutoff date.
+    
+    Args:
+        career_df: Career dataframe with nid, sequence, professional_career columns
+        nid: Judge's NID to filter by
+        cutoff_date: Only consider career positions up to this date
+        
+    Returns:
+        Dictionary with aggregated career metrics
+    """
+    # Filter by NID
+    careers = career_df[career_df["nid"] == nid].copy()
+    
+    if careers.empty:
+        return {
+            "years_private_practice": 0,
+            "has_govt_experience": False,
+            "has_prosecutor_experience": False,
+            "has_public_defender_experience": False,
+            "has_military_experience": False,
+            "has_law_professor_experience": False,
+            "has_state_judge_experience": False,
+            "has_federal_clerk_experience": False
+        }
+        
+    # Extract years from career descriptions
+    careers["start_year"], careers["end_year"] = zip(*careers["professional_career"].apply(extract_years_from_career))
+    
+    # Filter by cutoff date
+    careers = careers[careers["start_year"].notna()]
+    careers = careers[careers["start_year"] <= cutoff_date.year]
+    
+    if careers.empty:
+        return {
+            "years_private_practice": 0,
+            "has_govt_experience": False,
+            "has_prosecutor_experience": False,
+            "has_public_defender_experience": False,
+            "has_military_experience": False,
+            "has_law_professor_experience": False,
+            "has_state_judge_experience": False,
+            "has_federal_clerk_experience": False
+        }
+    
+    # Calculate years in different roles
+    cutoff_year = cutoff_date.year
+    
+    # Define patterns for different career types
+    career_patterns = {
+        "private_practice": r"private practice|law firm|partner|associate",
+        "govt_experience": r"department of justice|attorney general|solicitor general|government|federal|state",
+        "prosecutor": r"prosecutor|district attorney|u\.s\. attorney|state attorney",
+        "public_defender": r"public defender|legal aid|legal services",
+        "military": r"army|navy|marine|air force|military|jag|judge advocate",
+        "law_professor": r"professor|faculty|lecturer|instructor|taught|law school",
+        "state_judge": r"judge|justice|court|judicial|magistrate|commissioner",
+        "federal_clerk": r"clerk|clerked|clerkship"
+    }
+    
+    # Calculate years in private practice
+    private_practice_years = 0
+    for _, row in careers.iterrows():
+        career_text = str(row["professional_career"]).lower()
+        start_year = row["start_year"]
+        
+        # Skip if missing start year
+        if pd.isna(start_year):
+            continue
             
-            # Check if values are identical where both are non-null
-            inconsistent_mask = (
-                ~temp_merge[col].isna() & 
-                ~temp_merge[f"{col}_{name}"].isna() & 
-                (temp_merge[col] != temp_merge[f"{col}_{name}"])
-            )
+        # Use actual end year or cutoff year, whichever is earlier
+        end_year = row["end_year"]
+        if pd.isna(end_year) or end_year > cutoff_year:
+            end_year = cutoff_year
             
-            if inconsistent_mask.any():
-                inconsistent_count = inconsistent_mask.sum()
-                logger.warning(
-                    f"Found {inconsistent_count} inconsistent values for column '{col}' between "
-                    f"'{column_origins[col]}' and '{name}'. Using values from {column_origins[col]}."
-                )
-                # Optionally show examples of inconsistencies
-                if inconsistent_count > 0:
-                    examples = temp_merge[inconsistent_mask].head(3)
-                    logger.debug(f"Examples of inconsistencies in '{col}':\n{examples}")
-        
-        # Drop shared columns from right dataframe to avoid duplicates
-        right_df = df.drop(columns=[c for c in shared_cols])
-        
-        # Perform the left join
-        merged_df = merged_df.merge(right_df, on='nid', how='left')
-        
-        # Update column origins
-        for col in right_df.columns:
-            if col != 'nid':
-                column_origins[col] = name
-                
-        logger.info(f"Joined {name} - merged dataframe now has {len(merged_df)} rows, {len(merged_df.columns)} columns")
+        if re.search(career_patterns["private_practice"], career_text):
+            years = end_year - start_year
+            if years > 0:
+                private_practice_years += years
     
-    return merged_df
+    # Check for experience in different areas
+    career_text_combined = " ".join(careers["professional_career"].fillna("").str.lower())
+    
+    return {
+        "years_private_practice": private_practice_years,
+        "has_govt_experience": bool(re.search(career_patterns["govt_experience"], career_text_combined)),
+        "has_prosecutor_experience": bool(re.search(career_patterns["prosecutor"], career_text_combined)),
+        "has_public_defender_experience": bool(re.search(career_patterns["public_defender"], career_text_combined)),
+        "has_military_experience": bool(re.search(career_patterns["military"], career_text_combined)),
+        "has_law_professor_experience": bool(re.search(career_patterns["law_professor"], career_text_combined)),
+        "has_state_judge_experience": bool(re.search(career_patterns["state_judge"], career_text_combined)),
+        "has_federal_clerk_experience": bool(re.search(career_patterns["federal_clerk"], career_text_combined))
+    }
+
