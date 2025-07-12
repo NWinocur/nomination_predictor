@@ -1,6 +1,6 @@
 """Client for fetching judicial nomination data from Congress.gov API."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -311,9 +311,89 @@ class CongressAPIClient:
     BASE_URL = "https://api.congress.gov/v3"
     
     def __init__(self, api_key: Optional[str] = None):
+        """Initialize the Congress.gov API client.
+        
+        Args:
+            api_key: API key for Congress.gov. If not provided,
+                attempts to use CONGRESS_API_KEY environment variable.
+        """
         self.api_key = api_key or os.environ.get("CONGRESS_API_KEY")
+        
+        # Rate limit tracking properties
+        self.request_timestamps: List[datetime] = []
+        self.max_hourly_requests: int = 5000
+        self.warning_threshold: float = 0.8  # 80% of limit
+        
         if not self.api_key:
             raise ValueError("Congress.gov API key is required")
+            
+    def _track_request(self, count_request: bool = True) -> None:
+        """Track a new API request and clean up old request timestamps.
+        
+        Args:
+            count_request: Whether to add a new timestamp for the current request
+            
+        Returns:
+            None
+        """
+        now = datetime.now()
+        
+        # Add current request timestamp if this is an actual request
+        if count_request:
+            self.request_timestamps.append(now)
+        
+        # Remove timestamps older than 1 hour
+        one_hour_ago = now - timedelta(hours=1)
+        self.request_timestamps = [ts for ts in self.request_timestamps if ts >= one_hour_ago]
+        
+    def get_rate_limit_status(self) -> Dict[str, Any]:
+        """Get current API rate limit status.
+        
+        Returns:
+            Dict with rate limit information:
+                - requests_made: Number of requests in the last hour
+                - requests_remaining: Number of requests remaining in the current hour
+                - percent_used: Percentage of hourly limit used
+                - is_warning: Whether usage is above warning threshold
+                - is_exceeded: Whether rate limit is exceeded
+        """
+        # Clean up old timestamps first without counting this status check as a request
+        self._track_request(count_request=False)
+        
+        requests_made = len(self.request_timestamps)
+        requests_remaining = max(0, self.max_hourly_requests - requests_made)
+        percent_used = (requests_made / self.max_hourly_requests) * 100 if self.max_hourly_requests > 0 else 100
+        
+        return {
+            "requests_made": requests_made,
+            "requests_remaining": requests_remaining, 
+            "percent_used": percent_used,
+            "is_warning": percent_used >= (self.warning_threshold * 100),
+            "is_exceeded": requests_made >= self.max_hourly_requests
+        }
+        
+    def print_rate_limit_summary(self) -> None:
+        """Print a summary of the current rate limit status.
+        
+        This is useful for callers to check after bulk operations.
+        """
+        status = self.get_rate_limit_status()
+        
+        if status["is_exceeded"]:
+            logger.error(
+                f"⚠️ RATE LIMIT EXCEEDED: {status['requests_made']}/{self.max_hourly_requests} "
+                f"requests ({status['percent_used']:.1f}%) in the last hour"
+            )
+        elif status["is_warning"]:
+            logger.warning(
+                f"⚠️ APPROACHING RATE LIMIT: {status['requests_made']}/{self.max_hourly_requests} "
+                f"requests ({status['percent_used']:.1f}%) in the last hour"
+            )
+        else:
+            logger.info(
+                f"✓ Rate limit status: {status['requests_made']}/{self.max_hourly_requests} "
+                f"requests ({status['percent_used']:.1f}%) in the last hour"
+            )
             
     def get_nominations(self, congress: int, params: Dict[str, Any] = None, auto_paginate:bool=True) -> Dict[str, Any]:
         """
@@ -325,10 +405,14 @@ class CongressAPIClient:
         Args:
             congress: Congress number (e.g., 118)
             params: Additional parameters to pass to the API
+            auto_paginate: Whether to automatically fetch all pages (default: True)
             
         Returns:
             Combined results from all pages with 'nominations' key containing
             all nominations across all pages
+            
+        Raises:
+            RuntimeError: If the API rate limit is exceeded
         """
         url = f"{self.BASE_URL}/nomination/{congress}"
         default_params = {"api_key": self.api_key, "format": "json", "limit": 250}  # 250 is server-enforced limit; tried 500 and still got 250
@@ -343,6 +427,22 @@ class CongressAPIClient:
         total_nominations = []
         
         while True:
+            # Check rate limits before making request
+            status = self.get_rate_limit_status()
+            if status["is_exceeded"]:
+                error_msg = f"API rate limit exceeded: {status['requests_made']} requests in the last hour"
+                logger.error(f"⚠️ {error_msg}")
+                raise RuntimeError(error_msg)
+            
+            if status["is_warning"]:
+                logger.warning(
+                    f"⚠️ Approaching API rate limit: {status['requests_made']}/{self.max_hourly_requests} "
+                    f"requests ({status['percent_used']:.1f}%) in the last hour"
+                )
+            
+            # Track this request
+            self._track_request()
+            
             logger.info(f"Fetching page {page} for {congress}th Congress nominations")
             response = requests.get(url, params=default_params)
             response.raise_for_status()
@@ -637,18 +737,29 @@ class CongressAPIClient:
 
         Args:
             congress: Congress number (e.g., 118)
+            auto_paginate: Whether to automatically fetch all pages (default: True)
 
         Returns:
             List of judicial nomination records with minimal processing
+            
+        Raises:
+            RuntimeError: If the API rate limit is exceeded
         """
         logger.info(f"Fetching judicial nominations for Congress {congress}")
         
-        # First get all civilian nominations (exclude military)
-        all_nominations = self.get_nominations(congress, {"isCivilian": "true"}, auto_paginate=auto_paginate)    
-        
-        if not all_nominations or "nominations" not in all_nominations:
-            logger.warning(f"No nominations found for Congress {congress}")
-            return []
+        try:
+            # Print initial rate limit status
+            self.print_rate_limit_summary()
+            
+            # First get all civilian nominations (exclude military)
+            all_nominations = self.get_nominations(congress, {"isCivilian": "true"}, auto_paginate=auto_paginate)    
+            
+            if not all_nominations or "nominations" not in all_nominations:
+                logger.warning(f"No nominations found for Congress {congress}")
+                return []
+        except Exception as e:
+            logger.error(f"Error fetching nominations for Congress {congress}: {str(e)}")
+            raise
         
         # Get the actual nomination items from the response
         nominations = all_nominations.get("nominations", [])
@@ -661,6 +772,9 @@ class CongressAPIClient:
         # Log some examples of what we found
         for i, nom in enumerate(judicial_nominations[:10]):
             logger.info(f"Judicial nomination {i+1}: {nom.get('number')} - {nom.get('description', 'No description')}")
+        
+        # Print rate limit status before detailed fetching
+        self.print_rate_limit_summary()
         
         # For each judicial nomination, get the detailed information
         detailed_records = []
@@ -706,9 +820,12 @@ class CongressAPIClient:
                 logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number} (after error)")
                 # Print traceback for easier debugging
                 import traceback
-                logger.debug(f"Traceback: {traceback.format_exc()}")
+                traceback.print_exc()
         
-        # Apply column name normalization to all records
+        # Print final rate limit status after processing all nominations
+        self.print_rate_limit_summary()
+                
+        logger.info(f"Found {len(detailed_records)} detailed judicial nomination records")
         normalized_records = [normalize_column_names(record) for record in detailed_records]
         
         logger.info(f"Processed {len(normalized_records)} total judicial nomination records for Congress {congress}")
