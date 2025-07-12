@@ -220,53 +220,53 @@ def transform_nomination_data(nomination_data: Dict[str, Any], full_details: boo
         # Structure: {"nominees": [...]}
         nominees_data = nominees
     
-    # Check if nominees_data contains actual nominee objects with first/last names
-    has_valid_nominees = False
-    for nominee in nominees_data:
-        if isinstance(nominee, dict) and (nominee.get("firstName") or nominee.get("lastName")):
-            has_valid_nominees = True
-            break
+    # Add description to base record for all cases
+    description = nomination_data.get("description", "")
+    base_record["description"] = description
     
-    # Process from description if no valid nominees found
-    if (not nominees_data or not has_valid_nominees) and "description" in nomination_data:
-        # If no detailed nominee data available, create a single record from description
-        description = nomination_data.get("description", "")
-        base_record["description"] = description
+    # Try to extract circuit/court from description for all records
+    circuit, court = parse_court_from_description(description)
+    if circuit:
+        base_record["circuit"] = circuit
         
-        # Try to extract nominee name from description
-        name_match = re.search(r'^([^,]+),', description)
-        if name_match:
-            base_record["nominee"] = name_match.group(1).strip()
-        
-        # Try to extract circuit/court from description
-        circuit, court = parse_court_from_description(description)
-        
-        if circuit:
-            base_record["circuit"] = circuit
-            
-        if court:
-            base_record["court"] = court
-        
-        records.append(base_record)
+    if court:
+        base_record["court"] = court
     
+    # If no nominees data available, create a single record without nominee info
+    if not nominees_data:
+        records.append(base_record.copy())
     else:
         # Process each nominee separately
         for nominee in nominees_data:
             nominee_record = base_record.copy()
             
-            # Basic nominee info
+            # Basic nominee info with all possible name components
+            prefix = nominee.get("prefix", "")
             first_name = nominee.get("firstName", "")
+            middle_name = nominee.get("middleName", "")
             last_name = nominee.get("lastName", "")
+            suffix = nominee.get("suffix", "")
             
-            # If we have a name from the nominee object, use it
-            if first_name or last_name:
-                nominee_record["nominee"] = f"{first_name} {last_name}".strip()
-            else:
-                # Try to extract from description as fallback
-                description = nomination_data.get("description", "")
-                name_match = re.search(r'^([^,]+),', description)
-                if name_match:
-                    nominee_record["nominee"] = name_match.group(1).strip()
+            # Construct the nominee's full name including prefix and suffix if available
+            full_name_parts = []
+            if prefix:
+                full_name_parts.append(prefix)
+            if first_name:
+                full_name_parts.append(first_name)
+            if middle_name:
+                full_name_parts.append(middle_name)
+            if last_name:
+                full_name_parts.append(last_name)
+            if suffix:
+                full_name_parts.append(suffix)
+                
+            if full_name_parts:
+                nominee_record["nominee"] = " ".join(full_name_parts)
+            
+            # Add additional nominee details
+            nominee_record["state"] = nominee.get("state", "")
+            nominee_record["effective_date"] = nominee.get("effectiveDate", "")
+            nominee_record["predecessor_name"] = nominee.get("predecessorName", "")
             
             # Position info
             nominee_record["position_title"] = nominee.get("positionTitle", "")
@@ -326,7 +326,7 @@ class CongressAPIClient:
             all nominations across all pages
         """
         url = f"{self.BASE_URL}/nomination/{congress}"
-        default_params = {"api_key": self.api_key, "format": "json", "limit": 250}  # Set to known working limit
+        default_params = {"api_key": self.api_key, "format": "json", "limit": 250}  # 250 is server-enforced limit; tried 500 and still got 250
         if params:
             default_params.update(params)
         
@@ -404,65 +404,94 @@ class CongressAPIClient:
         Returns:
             Detailed nomination data
         """
-        url_path = f"{self.BASE_URL}/nomination/{congress}/{nomination_number}"
-        if part_number:
-            url_path += f"/{part_number}"
-            
+        url = f"{self.BASE_URL}/nomination/{congress}/{nomination_number}"
         params = {"api_key": self.api_key, "format": "json"}
         
-        logger.info(f"Fetching detail for nomination {nomination_number} ({congress}th Congress)")
+        if part_number:
+            url += f"/{part_number}"
+            
+        logger.info(f"Fetching nomination detail for {congress}-{nomination_number}")
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Nomination detail may be nested under 'nomination' key
+        if "nomination" in data:
+            nomination = data["nomination"]
+            
+            # The API sometimes returns a list instead of a dict for the 'nomination' key
+            if isinstance(nomination, list) and len(nomination) > 0:
+                nomination = nomination[0]  # Take the first item
+                
+            return nomination
+        
+        return data
+        
+    def get_nomination_nominees(self, congress: int, nomination_number: int) -> List[Dict[str, Any]]:
+        """
+        Extract nominee information from the nomination detail response.
+        
+        According to the API documentation, nominee data is included within the main nomination
+        detail response, not at a separate /nominees endpoint. The structure is:
+        
+        - <nomination>
+          - <nominees>
+            - <item>
+              - <firstName>
+              - <lastName>
+              - <middleName>
+              - <prefix>
+              - <suffix>
+              - <state>
+              - etc.
+        
+        Args:
+            congress: Congress number (e.g., 118)
+            nomination_number: Nomination number
+            
+        Returns:
+            List of nominees with detailed information
+        """
+        logger.info(f"Extracting nominee information for {congress}-{nomination_number}")
+        
         try:
-            response = requests.get(url_path, params=params)
-            response.raise_for_status()
-            data = response.json()
+            # Get the nomination detail which contains nominee information
+            detail = self.get_nomination_detail(congress, nomination_number)
             
-            # Extract the nomination from the nested response - handle both list and dict formats
-            nomination_data = {}
-            
-            if isinstance(data, dict) and 'nomination' in data:
-                # Handle both list and dictionary response formats
-                if isinstance(data['nomination'], list) and data['nomination']:
-                    # If it's a list, use the first item
-                    logger.debug(f"Nomination data returned as a list with {len(data['nomination'])} items")
-                    nomination_data = data['nomination'][0]
-                elif isinstance(data['nomination'], dict):
-                    # If it's a dictionary, use it directly
-                    nomination_data = data['nomination']
-                else:
-                    logger.warning(f"Unexpected nomination format: {type(data['nomination'])}")
+            # Extract nominees from the detail response
+            if not detail:
+                logger.warning(f"No nomination detail found for {congress}-{nomination_number}")
+                return []
+                
+            # Check for nominees in the detail response
+            if "nominees" in detail:
+                nominees = detail["nominees"]
+                
+                # Handle different possible structures for nominees
+                if isinstance(nominees, list):
+                    return nominees
+                elif isinstance(nominees, dict):
+                    if "item" in nominees:
+                        # Format: {"nominees": {"item": [...]}}
+                        items = nominees["item"]
+                        return items if isinstance(items, list) else [items]
+                    else:
+                        # Single nominee
+                        return [nominees]
             else:
-                logger.warning("No 'nomination' key found in response or response is not a dictionary")
-                logger.debug(f"Response structure: {type(data)}")
-                # Try to salvage by returning the entire response if it's a dict
-                if isinstance(data, dict):
-                    nomination_data = data
-            
-            # Log basic info about the response
-            logger.debug(f"Received detail for nomination {nomination_number}")
-            
-            # Log important fields for debugging
-            if isinstance(nomination_data, dict) and 'description' in nomination_data:
-                logger.debug(f"Nomination description: {nomination_data['description']}")
-            
-            # Handle nominees data structure correctly
-            if isinstance(nomination_data, dict):
-                nominees_data = nomination_data.get('nominees', {})
-                if isinstance(nominees_data, dict) and 'items' in nominees_data:
-                    nominees = nominees_data['items']
-                    logger.debug(f"Found {len(nominees)} nominees")
-                    for i, nominee in enumerate(nominees, 1):
-                        logger.debug(f"  Nominee {i}: {nominee.get('firstName', '')} {nominee.get('lastName', '')} - {nominee.get('positionTitle', 'No position')}")
-            
-            return nomination_data
-            
+                logger.warning(f"No nominees field in nomination detail for {congress}-{nomination_number}")
+                # For nominations with a single nominee, the nominee info might be directly in the nomination
+                # Try to extract nominee info from the nomination itself as fallback
+                nominee_fields = ["firstName", "lastName", "organization", "positionTitle"]
+                if any(field in detail for field in nominee_fields):
+                    logger.info(f"Using nomination detail as nominee for {congress}-{nomination_number}")
+                    return [detail]
+                
+            return []
         except Exception as e:
-            logger.error(f"Error fetching detail for nomination {nomination_number}: {str(e)}")
-            logger.debug(f"URL: {url_path}")
-            logger.debug(f"Params: {params}")
-            if 'response' in locals() and hasattr(response, 'text'):
-                logger.debug(f"Response text: {response.text[:500]}...")
-            raise
-
+            logger.error(f"Error extracting nominee data for {congress}-{nomination_number}: {str(e)}")
+            return []
+            
     def get_nomination_actions(self, congress: int, nomination_number: int) -> Dict[str, Any]:
         """
         Fetch actions for a specific nomination.
@@ -474,7 +503,7 @@ class CongressAPIClient:
         Returns:
             Nomination actions data
         """
-        url = f"{self.BASE_URL}/nomination/{congress}/{nomination_number}/actions"
+        url = f"{self.BASE_URL}/nomination/{congress}/{nomination_number}/actions"  # the /actions endpoint does exist, according to documentation
         params = {"api_key": self.api_key, "format": "json"}
         
         logger.info(f"Fetching actions for nomination {nomination_number} ({congress}th Congress)")
@@ -495,74 +524,72 @@ class CongressAPIClient:
         Returns:
             List of judicial nominations in the project's format
         """
-        records: list[dict[str, Any]] = []
         logger.info(f"Fetching judicial nominations for Congress {congress}")
-
-        params = {
-            "api_key": self.api_key,
-            "format": "json",
-            "nominationType": "Civilian"
-        }
-
-        # Get the summary list of nominations
-        response = self.get_nominations(congress, params=params)
-        if not response or not isinstance(response, dict):
-            logger.warning(f"Unexpected response format for Congress {congress}")
-            return records
-
-        nominations = response.get("nominations", [])
+        
+        # First get all civilian nominations (exclude military)
+        all_nominations = self.get_nominations(congress, {"isCivilian": "true"})    
+        
+        if not all_nominations or "nominations" not in all_nominations:
+            logger.warning(f"No nominations found for Congress {congress}")
+            return []
+        
+        # Get the actual nomination items from the response
+        nominations = all_nominations.get("nominations", [])
         logger.info(f"Found {len(nominations)} civilian nominations in Congress {congress}")
-
-        # Filter judicial nominations using only summary-level filter
-        judicial_nominations = [
-            nom for nom in nominations
-            if isinstance(nom, dict) and "number" in nom and is_likely_judicial_summary(nom)
-        ]
-
+        
+        # Filter for likely judicial nominations using summary data
+        judicial_nominations = [n for n in nominations if is_likely_judicial_summary(n)]
         logger.info(f"Found {len(judicial_nominations)} judicial nominations based on summary data")
         
-        # Log the first few judicial nominations identified
-        for i, nom in enumerate(judicial_nominations[:3], 1):
-            logger.info(f"Judicial nomination {i}: {nom.get('number')} - {nom.get('description', 'Unknown')}")
-
-        # Process each judicial nomination
-        for i, nom in enumerate(judicial_nominations, 1):
-            try:
-                nomination_number = nom["number"]
-                logger.info(f"Processing judicial nomination {i}/{len(judicial_nominations)}: {nomination_number}")
-                
-                # First, create records from summary data as fallback
-                summary_records = transform_nomination_data(nom)
-                
-                try:
-                    # Get detailed information 
-                    detail = self.get_nomination_detail(congress, nomination_number)
-                    if detail:
-                        # Transform the detail-level data (which has more information)
-                        detail_records = transform_nomination_data(detail, full_details=True)
-                        
-                        if detail_records:
-                            # Use the detail records which have more complete information
-                            records.extend(detail_records)
-                            logger.info(f"Added {len(detail_records)} detail-level records for nomination {nomination_number}")
-                        else:
-                            # Fall back to summary records if detail transformation fails
-                            records.extend(summary_records)
-                            logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number}")
-                    else:
-                        # Fall back to summary records if detail retrieval fails
-                        records.extend(summary_records)
-                        logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number} (detail unavailable)")
-                        
-                except Exception as e:
-                    logger.error(f"Error retrieving details for nomination {nomination_number}: {str(e)}")
-                    # Fall back to summary records on error
-                    records.extend(summary_records)
-                    logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number} (detail error)")
-
-            except Exception as e:
-                logger.error(f"Error processing nomination {nomination_number}: {str(e)}", exc_info=True)
+        # Log some examples of what we found
+        for i, nom in enumerate(judicial_nominations[:10]):
+            logger.info(f"Judicial nomination {i+1}: {nom.get('number')} - {nom.get('description', 'No description')}")
+        
+        # For each judicial nomination, get the detailed information
+        detailed_records = []
+        
+        for i, nomination in enumerate(judicial_nominations):
+            congress_number = nomination.get("congress")
+            nomination_number = nomination.get("number")
+            
+            if not congress_number or not nomination_number:
+                logger.warning(f"Missing congress or nomination number for entry {i}")
                 continue
-
-        logger.info(f"Completed processing. Found {len(records)} judicial nomination records")
-        return records
+                
+            logger.info(f"Processing judicial nomination {i+1}/{len(judicial_nominations)}: {nomination_number}")
+            
+            # First create records from summary data as fallback
+            summary_records = transform_nomination_data(nomination, full_details=False)
+            
+            # Fetch detailed information
+            try:
+                # Get detailed nomination data - already contains nominee information
+                detail = self.get_nomination_detail(congress_number, nomination_number)
+                
+                if not detail:
+                    logger.warning(f"No detail found for nomination {nomination_number}, using summary data")
+                    detailed_records.extend(summary_records)
+                    continue
+                    
+                # Transform the detail data into project format
+                records = transform_nomination_data(detail, full_details=True)
+                
+                if records:
+                    detailed_records.extend(records)
+                    logger.info(f"Added {len(records)} detail-level records for nomination {nomination_number}")
+                else:
+                    # If no detailed records, use the summary records
+                    logger.warning(f"No detail records created for {nomination_number}, falling back to summary")
+                    detailed_records.extend(summary_records)
+                    logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number}")
+            except Exception as e:
+                logger.error(f"Error processing nomination {nomination_number}: {str(e)}")
+                # Fall back to summary records on error
+                detailed_records.extend(summary_records)
+                logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number} (after error)")
+                # Print traceback for easier debugging
+                import traceback
+                logger.debug(f"Traceback: {traceback.format_exc()}")
+        
+        logger.info(f"Processed {len(detailed_records)} total judicial nomination records for Congress {congress}")
+        return detailed_records
