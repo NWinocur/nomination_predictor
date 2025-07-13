@@ -15,12 +15,12 @@ from nomination_predictor.fuzzy_matching import (
 def test_normalize_date_format():
     """Test date normalization function with various date formats."""
     # Test with different date formats
-    assert normalize_date_format("2022-03-15").date() == pd.Timestamp("2022-03-15").date()
-    assert normalize_date_format("03/15/2022").date() == pd.Timestamp("2022-03-15").date()
-    assert normalize_date_format("2022/03/15").date() == pd.Timestamp("2022-03-15").date()
+    assert normalize_date_format("2022-03-15") == pd.Timestamp("2022-03-15").date()
+    assert normalize_date_format("03/15/2022") == pd.Timestamp("2022-03-15").date()
+    assert normalize_date_format("2022/03/15") == pd.Timestamp("2022-03-15").date()
     
     # Test with datetime strings
-    assert normalize_date_format("2022-03-15 14:30:00").date() == pd.Timestamp("2022-03-15").date()
+    assert normalize_date_format("2022-03-15 14:30:00") == pd.Timestamp("2022-03-15").date()
     
     # Test with None/NaN
     assert normalize_date_format(None) is None

@@ -31,6 +31,10 @@ def normalize_date_format(date_str):
     if date_str is None or pd.isna(date_str):
         return None
     
+    # If already a date object, return as is
+    if isinstance(date_str, date):
+        return date_str
+    
     try:
         return pd.to_datetime(date_str).date()
     except (ValueError, TypeError):
@@ -233,7 +237,20 @@ def find_matches_with_blocking(
     # Convert results to DataFrame
     results_df = pd.DataFrame(results)
     
-    matched_count = len(results_df[results_df['match_score'] >= threshold])
+    # Handle the case where results is empty
+    if results_df.empty:
+        logger.info("No matches found (empty results DataFrame)")
+        # Ensure the DataFrame has the match_score column even when empty
+        results_df['match_score'] = pd.Series(dtype='float64')
+        return results_df
+    
+    # Ensure match_score column exists
+    if 'match_score' not in results_df.columns:
+        results_df['match_score'] = 0
+        matched_count = 0
+    else:
+        matched_count = len(results_df[results_df['match_score'] >= threshold])
+        
     logger.info(f"Matching complete. Found {matched_count} matches out of {len(results_df)} records")
     
     return results_df

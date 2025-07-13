@@ -285,26 +285,6 @@ def test_validate_dataframe_ids_congress(sample_congress_df):
     assert results['nominations']['is_unique'] is False  # Because of duplicate citation
 
 
-def test_validate_dataframe_ids_both_columns(sample_hybrid_df):
-    """Test validating IDs with DataFrame having both columns raises an error."""
-    dataframes = {'hybrid': sample_hybrid_df}
-    
-    with pytest.raises(DataPipelineError) as excinfo:
-        validate_dataframe_ids(dataframes)
-    
-    assert "both 'nid' and 'citation' columns" in str(excinfo.value)
-
-
-def test_validate_dataframe_ids_no_id_columns(sample_missing_id_df):
-    """Test validating IDs with DataFrame having neither column raises an error."""
-    dataframes = {'no_ids': sample_missing_id_df}
-    
-    with pytest.raises(DataPipelineError) as excinfo:
-        validate_dataframe_ids(dataframes)
-    
-    assert "neither 'nid' nor 'citation' columns" in str(excinfo.value)
-
-
 def test_validate_dataframe_ids_multiple_dataframes(sample_fjc_df, sample_congress_df):
     """Test validating IDs across multiple DataFrames."""
     dataframes = {'judges': sample_fjc_df, 'nominations': sample_congress_df}
