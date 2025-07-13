@@ -636,12 +636,26 @@ def explode_nomination_json(nominations_df: pd.DataFrame, json_col: str = "nomin
     This function preserves all fields from the original JSON to maintain data integrity.
     Uses robust parsing to handle non-standard JSON formats commonly found in CSVs.
     
+    According to Congress.gov API documentation, nominations data includes:
+    - Item level fields: congress, number, partNumber, citation, isPrivileged, isList, receivedDate,
+      description, executiveCalendarNumber, authorityDate, etc.
+    - Nested objects for nominees, committees, actions, hearings, and latestAction
+    - Special flags like nominationType.isCivilian and nominationType.isMilitary
+    
+    This function extracts all of these fields and organizes them into separate DataFrames
+    while maintaining relational links between them (via citation and other keys).
+    
     Args:
         nominations_df: DataFrame with JSON data in specified column (usually 'nomination')
         json_col: Name of the column containing the JSON data
         
     Returns:
-        Dictionary with normalized DataFrames: 'nominations', 'nominees', 'actions', etc.
+        Dictionary with normalized DataFrames:
+        - 'nominations': Core nomination data with scalar fields (congress, citation, etc.)
+        - 'nominees': Nominee information extracted from nominees.items
+        - 'actions': Action records extracted from actions.items
+        - 'committees': Committee records extracted from committees.items
+        - 'hearings': Hearing records extracted from hearings.items
     """
     if json_col not in nominations_df.columns:
         raise ValueError(f"nominations_df must contain '{json_col}' column")
@@ -830,6 +844,166 @@ def explode_nomination_json(nominations_df: pd.DataFrame, json_col: str = "nomin
         "actions": actions_df,
         "committees": committees_df,
         "hearings": hearings_df
+    }
+
+
+def explode_nominee_json(nominees_df: pd.DataFrame, json_col: str = "nominee") -> Dict[str, pd.DataFrame]:
+    """
+    Extract all fields from JSON-containing nominee DataFrame into structured tables.
+    This function processes data from the Congress.gov API nominee endpoints.
+    Uses robust parsing to handle non-standard JSON formats commonly found in CSVs.
+    
+    According to Congress.gov API documentation, nominee data includes:
+    - Basic nominee information: firstName, lastName, middleName, prefix, suffix, state
+    - Position-related fields: effectiveDate, predecessorName, corpsCode
+    - Organization and education history information when available
+    
+    This function preserves all fields from the original JSON to maintain data integrity,
+    organizing them into relational tables with appropriate linking keys (citation, 
+    nomination_number, nominee_ordinal).
+    
+    Args:
+        nominees_df: DataFrame with JSON data in specified column (usually 'nominee')
+        json_col: Name of the column containing the JSON data
+        
+    Returns:
+        Dictionary with normalized DataFrames:
+        - 'nominees': Core nominee data (firstName, lastName, etc.)
+        - 'organizations': Organization records associated with nominees
+        - 'educational_history': Educational history records for nominees
+    """
+    if json_col not in nominees_df.columns:
+        raise ValueError(f"nominees_df must contain '{json_col}' column")
+    
+    nominee_rows, organization_rows, educational_history_rows = [], [], []
+    
+    logger.info(f"Processing {len(nominees_df)} nominee records")
+    
+    # Process each row with error handling
+    for idx, row in tqdm(nominees_df.iterrows(), total=len(nominees_df), desc="Extracting nominee JSON data"):
+        try:
+            # Use robust parsing to handle various JSON/dict string formats
+            json_data = row[json_col]
+            body = _safe_parse_json(json_data)
+            
+            # Get the request data (contains citation info)
+            request_data = row.get("request", {})
+            if isinstance(request_data, str):
+                request_data = _safe_parse_json(request_data)
+                
+            # Extract citation from URL if available
+            citation = None
+            congress = None
+            nomination_number = None
+            nominee_ordinal = None
+            
+            if isinstance(request_data, dict) and "url" in request_data:
+                url = request_data.get("url", "")
+                # Parse URL to get congress/nomination/nominee numbers
+                # Format: https://api.congress.gov/v3/nomination/{congress}/{number}/{ordinal}?format=json
+                url_match = re.search(r"/nomination/([^/]+)/([^/]+)/([^/?]+)", url)
+                if url_match:
+                    congress = url_match.group(1)
+                    nomination_number = url_match.group(2)
+                    nominee_ordinal = url_match.group(3)
+                    citation = f"{congress}PN{nomination_number}"
+            
+            # If citation not found in URL, try to get from request data
+            if not citation and isinstance(body, dict) and "request" in body:
+                req = body.get("request", {})
+                if isinstance(req, dict):
+                    cong = req.get("congress")
+                    num = req.get("number")
+                    if cong and num:
+                        citation = f"{cong}PN{num}"
+                        congress = cong
+                        nomination_number = num
+            
+            # Add essential metadata
+            metadata = {
+                "citation": citation,
+                "congress": congress,
+                "nomination_number": nomination_number,
+                "nominee_ordinal": nominee_ordinal,
+                "retrieval_date": row.get("retrieval_date")
+            }
+            
+            # Process nominee information
+            if "nominees" in body and isinstance(body["nominees"], list):
+                # Process each nominee in the list
+                for nominee in body["nominees"]:
+                    if isinstance(nominee, dict):
+                        nominee_record = {}
+                        
+                        # Extract basic nominee information
+                        for k, v in nominee.items():
+                            # Handle nested objects separately
+                            if not isinstance(v, (dict, list)):
+                                nominee_record[k] = v
+                        
+                        # Add metadata for joining
+                        nominee_record.update(metadata)
+                        nominee_rows.append(nominee_record)
+                        
+                        # Process organizations if present
+                        if "organizations" in nominee and isinstance(nominee["organizations"], list):
+                            for org in nominee["organizations"]:
+                                if isinstance(org, dict):
+                                    org_record = {}
+                                    
+                                    # Extract organization details
+                                    for k, v in org.items():
+                                        if not isinstance(v, (dict, list)):
+                                            org_record[k] = v
+                                    
+                                    # Add metadata for joining
+                                    org_record.update(metadata)
+                                    organization_rows.append(org_record)
+                        
+                        # Process educational history if present
+                        if "educationalHistory" in nominee and isinstance(nominee["educationalHistory"], list):
+                            for edu in nominee["educationalHistory"]:
+                                if isinstance(edu, dict):
+                                    edu_record = {}
+                                    
+                                    # Extract education details
+                                    for k, v in edu.items():
+                                        if not isinstance(v, (dict, list)):
+                                            edu_record[k] = v
+                                    
+                                    # Add metadata for joining
+                                    edu_record.update(metadata)
+                                    educational_history_rows.append(edu_record)
+            
+            # Handle pagination if present
+            if "pagination" in body and isinstance(body["pagination"], dict):
+                if not nominee_rows:
+                    # Create a placeholder nominee record if none exists
+                    nominee_record = {
+                        "count": body["pagination"].get("count"),
+                    }
+                    nominee_record.update(metadata)
+                    nominee_rows.append(nominee_record)
+                    
+        except (json.JSONDecodeError, TypeError, AttributeError) as e:
+            logger.error(f"Error processing nominee row {idx}: {str(e)}")
+            continue
+    
+    # Create DataFrames from collected rows
+    nominees_df_clean = pd.DataFrame(nominee_rows) if nominee_rows else pd.DataFrame()
+    organizations_df = pd.DataFrame(organization_rows) if organization_rows else pd.DataFrame()
+    educational_history_df = pd.DataFrame(educational_history_rows) if educational_history_rows else pd.DataFrame()
+    
+    # Report on what we've extracted
+    logger.info(f"Extracted {len(nominees_df_clean)} nominee records")
+    logger.info(f"Extracted {len(organizations_df)} organization records")
+    logger.info(f"Extracted {len(educational_history_df)} educational history records")
+    
+    # Return all extracted dataframes in a dictionary
+    return {
+        "nominees": nominees_df_clean,
+        "organizations": organizations_df,
+        "educational_history": educational_history_df
     }
 
 

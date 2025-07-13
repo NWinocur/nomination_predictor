@@ -6,7 +6,7 @@ import os
 import re
 import time
 import traceback
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from loguru import logger
 import requests
@@ -136,13 +136,17 @@ def extract_nomination_data(
     
     # Create metadata for each record to track its source
     metadata = {
-        "retrieval_date": datetime.now().isoformat(),
+        "retrieval_date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         "is_full_detail": full_details,
     }
 
     # First handle the nomination-level data
     nomination_desc = nomination_data.get("description", "")
     citation = nomination_data.get("citation", "")
+    
+    # Add citation to metadata if available
+    if citation:
+        metadata["citation"] = citation
 
     # Parse circuit and court if present in description
     circuit_num, court_code = parse_court_from_description(nomination_desc)
@@ -211,12 +215,12 @@ class CongressAPIClient:
             ValueError: If no API key is provided or found in environment variables
         """
         self.api_key = api_key or os.getenv('CONGRESS_API_KEY')
-        self.base_url = "https://api.congress.gov/v3"
+        self.BASE_URL = "https://api.congress.gov/v3"
         
         # Rate limiting parameters
         self.max_hourly_requests = 5000  # Congress.gov API limit
         self.warning_threshold = 0.8  # Start graduated delays at 80% of limit
-        self.request_timestamps = []  # Track request timestamps for rate limiting
+        self.request_timestamps: list[datetime] = []  # Track request timestamps for rate limiting
         
         # Backoff state tracking
         self.current_backoff_ms = 0  # Current backoff in milliseconds
@@ -569,7 +573,7 @@ class CongressAPIClient:
         Returns:
             List of nominee data dictionaries with request metadata
         """
-        all_nominees = []
+        all_nominees: list[Dict[str, Any]] = []
         total = len(nominee_urls)
         
         if total == 0:
@@ -591,8 +595,10 @@ class CongressAPIClient:
         for i, url in enumerate(nominee_urls):
             # Update progress bar description frequently for visibility
             if show_progress:
-                progress_iterator.set_description(f"Fetching nominee {i+1}/{total}")
-                progress_iterator.update(0)  # Force refresh without advancing
+                # Cast to tqdm to fix MyPy errors
+                progress_bar = cast(tqdm, progress_iterator)
+                progress_bar.set_description(f"Fetching nominee {i+1}/{total}")
+                progress_bar.update(0)  # Force refresh without advancing
             
             # Periodically log progress to notebook/console for visibility
             current_time = time.time()
@@ -616,7 +622,8 @@ class CongressAPIClient:
                     
                     if show_progress:
                         # Update progress bar description to show warning
-                        progress_iterator.set_description(
+                        progress_bar = cast(tqdm, progress_iterator)
+                        progress_bar.set_description(
                             f"Processing: {url.split('/')[-1]} (Rate: {rate_status['percent_used']:.1f}%)"
                         )
                     
@@ -644,8 +651,9 @@ class CongressAPIClient:
                 
                 # Explicitly update progress for notebook visibility
                 if show_progress:
-                    progress_iterator.set_postfix_str(f"Success: {success_count}, Errors: {error_count}")
-                    progress_iterator.update(1)  # Advance the progress bar
+                    progress_bar = cast(tqdm, progress_iterator)
+                    progress_bar.set_postfix_str(f"Success: {success_count}, Errors: {error_count}")
+                    progress_bar.update(1)  # Advance the progress bar
                     
             except Exception as e:
                 error_msg = f"Error processing nominee URL {url}: {str(e)}"
@@ -654,8 +662,9 @@ class CongressAPIClient:
                 
                 if show_progress:
                     # Update progress bar postfix to show error count
-                    progress_iterator.set_postfix_str(f"Success: {success_count}, Errors: {error_count}, Last error: {str(e)[:30]}..." if len(str(e)) > 30 else f"Success: {success_count}, Errors: {error_count}, Last error: {str(e)}")
-                    progress_iterator.update(1)  # Advance the progress bar
+                    progress_bar = cast(tqdm, progress_iterator)
+                    progress_bar.set_postfix_str(f"Success: {success_count}, Errors: {error_count}, Last error: {str(e)[:30]}..." if len(str(e)) > 30 else f"Success: {success_count}, Errors: {error_count}, Last error: {str(e)}")
+                    progress_bar.update(1)  # Advance the progress bar
                 
                 # Continue with next nominee instead of failing the entire batch
         
@@ -724,8 +733,9 @@ class CongressAPIClient:
         for i, nomination in enumerate(judicial_nominations):
             # Update progress bar description frequently for visibility
             if use_progress_bar:
-                nominations_iter.set_description(f"Fetching nomination {i+1}/{len(judicial_nominations)}")
-                nominations_iter.update(0)  # Force refresh without advancing
+                progress_bar = cast(tqdm, nominations_iter)
+                progress_bar.set_description(f"Fetching nomination {i+1}/{len(judicial_nominations)}")
+                progress_bar.update(0)  # Force refresh without advancing
             
             # Periodically log progress to notebook/console for visibility
             current_time = time.time()
@@ -740,7 +750,8 @@ class CongressAPIClient:
                 continue
                 
             if use_progress_bar:
-                nominations_iter.set_description(f"Processing: {nomination_number}")
+                progress_bar = cast(tqdm, nominations_iter)
+                progress_bar.set_description(f"Processing: {nomination_number}")
             else:
                 logger.info(f"Processing judicial nomination {i+1}/{len(judicial_nominations)}: {nomination_number}")
             
@@ -759,7 +770,8 @@ class CongressAPIClient:
                 
                 if use_progress_bar:
                     # Update progress bar description to show warning
-                    nominations_iter.set_description(f"Processing: {nomination_number} (Rate: {rate_status['percent_used']:.1f}%)")
+                    progress_bar = cast(tqdm, nominations_iter)
+                    progress_bar.set_description(f"Processing: {nomination_number} (Rate: {rate_status['percent_used']:.1f}%)")
                 
                 if delay > 0:
                     time.sleep(delay)
@@ -788,8 +800,9 @@ class CongressAPIClient:
                     
                     # Update progress bar
                     if use_progress_bar:
-                        nominations_iter.set_postfix_str(f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}")
-                        nominations_iter.update(1)  # Advance the progress bar
+                        progress_bar = cast(tqdm, nominations_iter)
+                        progress_bar.set_postfix_str(f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}")
+                        progress_bar.update(1)  # Advance the progress bar
                 else:
                     # If no detailed records, use the summary records
                     logger.warning(f"No detail records created for {nomination_number}, falling back to summary")
@@ -800,8 +813,9 @@ class CongressAPIClient:
                     
                     # Update progress bar
                     if use_progress_bar:
-                        nominations_iter.set_postfix_str(f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}")
-                        nominations_iter.update(1)  # Advance the progress bar
+                        progress_bar = cast(tqdm, nominations_iter)
+                        progress_bar.set_postfix_str(f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}")
+                        progress_bar.update(1)  # Advance the progress bar
             except requests.exceptions.RequestException as e:
                 # This exception would have been retried by the decorator on get_nomination_detail
                 # If we're here, we've exhausted all retries
@@ -817,13 +831,14 @@ class CongressAPIClient:
                 
                 # Update progress bar to show the error
                 if use_progress_bar:
-                    nominations_iter.set_postfix_str(f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}, Last error: {str(e)[:30]}..." if len(str(e)) > 30 else f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}, Last error: {str(e)}")
-                    nominations_iter.update(1)  # Advance the progress bar
+                    progress_bar = cast(tqdm, nominations_iter)
+                    progress_bar.set_postfix_str(f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}, Last error: {str(e)[:30]}..." if len(str(e)) > 30 else f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}, Last error: {str(e)}")
+                    progress_bar.update(1)  # Advance the progress bar
         
         # Print final rate limit status after processing all nominations
         self.print_rate_limit_summary()
                 
-        # Add comprehensive final status log with all counts
+        # Log final processing statistics
         logger.info(f"Processing complete - Summary: {success_count} nominations processed successfully, {detail_count} detail records, {summary_count} summary records, {error_count} errors")
         logger.info(f"Found {len(detailed_records)} total judicial nomination records for Congress {congress}")
         
