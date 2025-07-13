@@ -10,20 +10,11 @@ Given a vacancy is on record as having existed in a specified court, with a name
 Given a nomination is on record as having occurred on a specified date, when filling in date-dependent feature data (e.g. which President performed the nomination), then the interim data shall be updated to include date-inferred data (e.g. a numeric ordinal indicator identifying that President who was in office on the date of nomination.
 """
 
-import ast
-from datetime import date, timedelta
-from functools import lru_cache
-import json
-from pathlib import Path
-import re
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict
 
 from loguru import logger
 import pandas as pd
-from thefuzz import fuzz
 from tqdm import tqdm
-
-from nomination_predictor.config import INTERIM_DATA_DIR, RAW_DATA_DIR
 
 
 def normalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
