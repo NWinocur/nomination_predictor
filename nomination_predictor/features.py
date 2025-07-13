@@ -303,9 +303,8 @@ def load_simpler_dataframes(raw_data_dir: Path = RAW_DATA_DIR) -> Dict[str, pd.D
         )
         fjc_other_nominations_recess = pd.read_csv(raw_data_dir / "other_nominations_recess.csv")
         seat_timeline = pd.read_csv(raw_data_dir / "seat_timeline.csv")
-        #cong_nominees = pd.read_csv(raw_data_dir / "nominees.csv")
-        #cong_nominations = pd.read_csv(raw_data_dir / "nominations.csv")
-
+        # cong_nominees = pd.read_csv(raw_data_dir / "nominees.csv")
+        # cong_nominations = pd.read_csv(raw_data_dir / "nominations.csv")
 
         # Return all dataframes
         return {
@@ -316,8 +315,8 @@ def load_simpler_dataframes(raw_data_dir: Path = RAW_DATA_DIR) -> Dict[str, pd.D
             "fjc_other_federal_judicial_service": fjc_other_federal_judicial_service,
             "fjc_other_nominations_recess": fjc_other_nominations_recess,
             "seat_timeline": seat_timeline,
-            #"cong_nominees": cong_nominees,
-            #"cong_nominations": cong_nominations,
+            # "cong_nominees": cong_nominees,
+            # "cong_nominations": cong_nominations,
         }
     except Exception as e:
         logger.error(f"Error loading dataframes: {e}")
@@ -585,17 +584,17 @@ def filter_non_judicial_nominations(
 def _safe_parse_json(json_str: str) -> dict:
     """
     Robustly parse a JSON string that might not be strictly JSON compliant (e.g., with single quotes).
-    
+
     Args:
         json_str: String representation of JSON/dict, possibly with single quotes
-        
+
     Returns:
         Parsed dictionary
     """
     if not isinstance(json_str, str):
         # If it's already a dictionary, return it directly
         return json_str if isinstance(json_str, dict) else {}
-        
+
     try:
         # First try standard JSON parsing
         return json.loads(json_str)
@@ -610,7 +609,7 @@ def _safe_parse_json(json_str: str) -> dict:
                 # This uses a regex to avoid replacing quotes inside already quoted strings
                 # We do multiple replacements to handle nested structures properly
                 processed = json_str
-                # Step 1: Replace single-quoted strings with specially marked strings  
+                # Step 1: Replace single-quoted strings with specially marked strings
                 processed = re.sub(r"'([^']*)'(?=\s*[:,}\]])", r'"\1"', processed)
                 # Step 2: Replace remaining property names with double-quoted ones
                 processed = re.sub(r"([{,]\s*)'([^']*)'", r'\1"\2"', processed)
@@ -622,7 +621,7 @@ def _safe_parse_json(json_str: str) -> dict:
                     # Replace single quotes with double quotes
                     s = json_str.replace("'", '"')
                     # Fix True/False/None literals
-                    s = s.replace('True', 'true').replace('False', 'false').replace('None', 'null')
+                    s = s.replace("True", "true").replace("False", "false").replace("None", "null")
                     return json.loads(s)
                 except Exception as e:
                     # If all attempts fail, log the error and return empty dict
@@ -630,25 +629,27 @@ def _safe_parse_json(json_str: str) -> dict:
                     return {}
 
 
-def explode_nomination_json(nominations_df: pd.DataFrame, json_col: str = "nomination") -> Dict[str, pd.DataFrame]:
+def explode_nomination_json(
+    nominations_df: pd.DataFrame, json_col: str = "nomination"
+) -> Dict[str, pd.DataFrame]:
     """
     Extract all fields from JSON-containing nomination DataFrame into structured tables.
     This function preserves all fields from the original JSON to maintain data integrity.
     Uses robust parsing to handle non-standard JSON formats commonly found in CSVs.
-    
+
     According to Congress.gov API documentation, nominations data includes:
     - Item level fields: congress, number, partNumber, citation, isPrivileged, isList, receivedDate,
       description, executiveCalendarNumber, authorityDate, etc.
     - Nested objects for nominees, committees, actions, hearings, and latestAction
     - Special flags like nominationType.isCivilian and nominationType.isMilitary
-    
+
     This function extracts all of these fields and organizes them into separate DataFrames
     while maintaining relational links between them (via citation and other keys).
-    
+
     Args:
         nominations_df: DataFrame with JSON data in specified column (usually 'nomination')
         json_col: Name of the column containing the JSON data
-        
+
     Returns:
         Dictionary with normalized DataFrames:
         - 'nominations': Core nomination data with scalar fields (congress, citation, etc.)
@@ -659,244 +660,273 @@ def explode_nomination_json(nominations_df: pd.DataFrame, json_col: str = "nomin
     """
     if json_col not in nominations_df.columns:
         raise ValueError(f"nominations_df must contain '{json_col}' column")
-        
+
     nom_rows, nominee_rows, action_rows, committee_rows, hearing_rows = [], [], [], [], []
-    
+
     logger.info(f"Processing {len(nominations_df)} nomination records")
-    
+
     # Process each row with error handling
-    for idx, row in tqdm(nominations_df.iterrows(), total=len(nominations_df), desc="Extracting JSON data"):
+    for idx, row in tqdm(
+        nominations_df.iterrows(), total=len(nominations_df), desc="Extracting JSON data"
+    ):
         try:
             # Use robust parsing to handle various JSON/dict string formats
             json_data = row[json_col]
             body = _safe_parse_json(json_data)
-            
+
             # Add essential metadata from the dataframe row
             metadata = {
                 "citation": body.get("citation"),
                 "congress": body.get("congress"),
-                "retrieval_date": row.get("retrieval_date")
+                "retrieval_date": row.get("retrieval_date"),
             }
-            
+
             # -------------- NOMINATIONS TABLE --------------
             # Extract all top-level scalar fields
             nom_record = {}
-            
+
             # Add all scalar values directly
             for key, value in body.items():
                 # Skip complex objects that are handled separately
-                if isinstance(value, dict) and any(k in key.lower() for k in ["nominees", "actions", "committees", "hearings"]):
+                if (
+                    isinstance(value, dict)
+                    and any(
+                        k in key.lower() for k in ["nominees", "actions", "committees", "hearings"]
+                    )
+                ) or (key.lower() == "nominees" and isinstance(value, list)):
                     continue
-                    
+
                 # Include all scalar values and simple lists
                 if not isinstance(value, dict):
                     nom_record[key] = value
-            
+
             # Handle latestAction specially (it's a common nested dict)
             if "latestAction" in body and isinstance(body["latestAction"], dict):
                 for k, v in body["latestAction"].items():
                     nom_record[f"latest_action_{k}"] = v
-            
+
             # Handle nominationType specially (it's a common nested dict)
             if "nominationType" in body and isinstance(body["nominationType"], dict):
                 for k, v in body["nominationType"].items():
                     nom_record[f"nomination_type_{k}"] = v
-                    
+
             # Add the metadata
             nom_record.update(metadata)
             nom_rows.append(nom_record)
-            
+
             # -------------- NOMINEES TABLE --------------
-            if "nominees" in body and isinstance(body["nominees"], dict) and "items" in body["nominees"]:
-                for nominee in body["nominees"].get("items", []):
+            # Handle nominees as a list (what we're seeing) or dict with "items" (what API docs suggest)
+            if "nominees" in body:
+                nominees_list = []
+
+                if isinstance(body["nominees"], dict) and "items" in body["nominees"]:
+                    # Structure from API docs with "items" key
+                    nominees_list = body["nominees"].get("items", [])
+                elif isinstance(body["nominees"], list):
+                    # Structure we're actually seeing
+                    nominees_list = body["nominees"]
+
+                # Process each nominee
+                for nominee in nominees_list:
                     if isinstance(nominee, dict):
-                        nominee_record = {}
-                        
-                        # Extract all direct scalar fields from nominee
-                        for k, v in nominee.items():
-                            if not isinstance(v, dict):
-                                nominee_record[k] = v
-                                
-                        # Handle nested position data
-                        if "position" in nominee and isinstance(nominee["position"], dict):
-                            for pos_k, pos_v in nominee["position"].items():
-                                nominee_record[f"position_{pos_k}"] = pos_v
-                        
+                        nominee_record = nominee.copy()  # Start with all fields
+
+                        # Handle nested structures if any
+                        for k in list(nominee_record.keys()):
+                            if isinstance(nominee_record[k], dict):
+                                # Extract nested dict fields with prefixes
+                                for sub_k, sub_v in nominee_record[k].items():
+                                    nominee_record[f"{k}_{sub_k}"] = sub_v
+                            # Remove the original dict
+                            del nominee_record[k]
+
                         # Add metadata for joining
                         nominee_record.update(metadata)
                         nominee_rows.append(nominee_record)
-                        
-            # Check for nominee details at the URL endpoint
-            if "nominees" in body and "url" in body["nominees"]:
-                nominee_record = {
-                    "nominees_url": body["nominees"].get("url"),
-                    "nominees_count": body["nominees"].get("count")
-                }
-                nominee_record.update(metadata)
-                
-                # Only add if not already captured from items
-                if not any(n.get("nominees_url") == nominee_record["nominees_url"] for n in nominee_rows):
-                    nominee_rows.append(nominee_record)
-            
+
+                # Important: Remove the nominees field from the core nomination record
+                if "nominees" in nom_record:
+                    del nom_record["nominees"]
+
             # -------------- ACTIONS TABLE --------------
-            if "actions" in body and isinstance(body["actions"], dict) and "items" in body["actions"]:
+            if (
+                "actions" in body
+                and isinstance(body["actions"], dict)
+                and "items" in body["actions"]
+            ):
                 for action in body["actions"].get("items", []):
                     if isinstance(action, dict):
                         action_record = {}
-                        
+
                         # Extract all direct fields from action
                         for k, v in action.items():
                             if not isinstance(v, dict):
                                 action_record[k] = v
-                                
+
                         # Add metadata for joining
                         action_record.update(metadata)
                         action_rows.append(action_record)
-            
+
             # If actions aren't in items but URL is available
             if "actions" in body and "url" in body["actions"]:
                 action_record = {
                     "actions_url": body["actions"].get("url"),
-                    "actions_count": body["actions"].get("count")
+                    "actions_count": body["actions"].get("count"),
                 }
                 action_record.update(metadata)
-                
+
                 # Only add if we don't have detailed actions
-                if not any(a.get("actions_url") == action_record["actions_url"] for a in action_rows):
+                if not any(
+                    a.get("actions_url") == action_record["actions_url"] for a in action_rows
+                ):
                     action_rows.append(action_record)
-            
+
             # -------------- COMMITTEES TABLE --------------
-            if "committees" in body and isinstance(body["committees"], dict) and "items" in body["committees"]:
+            if (
+                "committees" in body
+                and isinstance(body["committees"], dict)
+                and "items" in body["committees"]
+            ):
                 for committee in body["committees"].get("items", []):
                     if isinstance(committee, dict):
                         committee_record = {}
-                        
+
                         # Extract all direct fields
                         for k, v in committee.items():
                             if not isinstance(v, dict):
                                 committee_record[k] = v
-                                
+
                         # Add metadata for joining
                         committee_record.update(metadata)
                         committee_rows.append(committee_record)
-            
+
             # If committee URL available but no items
             if "committees" in body and "url" in body["committees"]:
                 committee_record = {
                     "committees_url": body["committees"].get("url"),
-                    "committees_count": body["committees"].get("count")
+                    "committees_count": body["committees"].get("count"),
                 }
                 committee_record.update(metadata)
-                
+
                 # Only add if we don't have detailed committees
-                if not any(c.get("committees_url") == committee_record["committees_url"] for c in committee_rows):
+                if not any(
+                    c.get("committees_url") == committee_record["committees_url"]
+                    for c in committee_rows
+                ):
                     committee_rows.append(committee_record)
-            
+
             # -------------- HEARINGS TABLE --------------
-            if "hearings" in body and isinstance(body["hearings"], dict) and "items" in body["hearings"]:
+            if (
+                "hearings" in body
+                and isinstance(body["hearings"], dict)
+                and "items" in body["hearings"]
+            ):
                 for hearing in body["hearings"].get("items", []):
                     if isinstance(hearing, dict):
                         hearing_record = {}
-                        
+
                         # Extract all direct fields
                         for k, v in hearing.items():
                             if not isinstance(v, dict):
                                 hearing_record[k] = v
-                                
+
                         # Add metadata for joining
                         hearing_record.update(metadata)
                         hearing_rows.append(hearing_record)
-            
+
             # If hearings URL available but no items
             if "hearings" in body and "url" in body["hearings"]:
                 hearing_record = {
                     "hearings_url": body["hearings"].get("url"),
-                    "hearings_count": body["hearings"].get("count")
+                    "hearings_count": body["hearings"].get("count"),
                 }
                 hearing_record.update(metadata)
-                
+
                 # Only add if we don't have detailed hearings
-                if not any(h.get("hearings_url") == hearing_record["hearings_url"] for h in hearing_rows):
+                if not any(
+                    h.get("hearings_url") == hearing_record["hearings_url"] for h in hearing_rows
+                ):
                     hearing_rows.append(hearing_record)
-                
+
         except (json.JSONDecodeError, TypeError, AttributeError) as e:
             logger.error(f"Error processing row {idx}: {str(e)}")
             continue
-    
+
     # Create DataFrames from collected rows
     nominations_df_clean = pd.DataFrame(nom_rows) if nom_rows else pd.DataFrame()
     nominees_df = pd.DataFrame(nominee_rows) if nominee_rows else pd.DataFrame()
     actions_df = pd.DataFrame(action_rows) if action_rows else pd.DataFrame()
     committees_df = pd.DataFrame(committee_rows) if committee_rows else pd.DataFrame()
     hearings_df = pd.DataFrame(hearing_rows) if hearing_rows else pd.DataFrame()
-    
+
     # Report on what we've extracted
     logger.info(f"Extracted {len(nominations_df_clean)} nomination records")
     logger.info(f"Extracted {len(nominees_df)} nominee records")
     logger.info(f"Extracted {len(actions_df)} action records")
     logger.info(f"Extracted {len(committees_df)} committee records")
     logger.info(f"Extracted {len(hearings_df)} hearing records")
-    
+
     # Return all extracted dataframes in a dictionary
     return {
         "nominations": nominations_df_clean,
         "nominees": nominees_df,
         "actions": actions_df,
         "committees": committees_df,
-        "hearings": hearings_df
+        "hearings": hearings_df,
     }
 
 
-def explode_nominee_json(nominees_df: pd.DataFrame, json_col: str = "nominee") -> Dict[str, pd.DataFrame]:
+def explode_nominee_json(
+    nominees_df: pd.DataFrame, json_col: str = "nominee"
+) -> pd.DataFrame:
     """
     Extract all fields from JSON-containing nominee DataFrame into structured tables.
     This function processes data from the Congress.gov API nominee endpoints.
     Uses robust parsing to handle non-standard JSON formats commonly found in CSVs.
-    
+
     According to Congress.gov API documentation, nominee data includes:
     - Basic nominee information: firstName, lastName, middleName, prefix, suffix, state
     - Position-related fields: effectiveDate, predecessorName, corpsCode
-    - Organization and education history information when available
-    
+
     This function preserves all fields from the original JSON to maintain data integrity,
-    organizing them into relational tables with appropriate linking keys (citation, 
+    organizing them into relational tables with appropriate linking keys (citation,
     nomination_number, nominee_ordinal).
-    
+
     Args:
         nominees_df: DataFrame with JSON data in specified column (usually 'nominee')
         json_col: Name of the column containing the JSON data
-        
+
     Returns:
-        Dictionary with normalized DataFrames:
+        DataFrame with normalized DataFrames:
         - 'nominees': Core nominee data (firstName, lastName, etc.)
-        - 'organizations': Organization records associated with nominees
-        - 'educational_history': Educational history records for nominees
     """
     if json_col not in nominees_df.columns:
         raise ValueError(f"nominees_df must contain '{json_col}' column")
-    
-    nominee_rows, organization_rows, educational_history_rows = [], [], []
-    
+
+    nominee_rows = []
+
     logger.info(f"Processing {len(nominees_df)} nominee records")
-    
+
     # Process each row with error handling
-    for idx, row in tqdm(nominees_df.iterrows(), total=len(nominees_df), desc="Extracting nominee JSON data"):
+    for idx, row in tqdm(
+        nominees_df.iterrows(), total=len(nominees_df), desc="Extracting nominee JSON data"
+    ):
         try:
             # Use robust parsing to handle various JSON/dict string formats
             json_data = row[json_col]
             body = _safe_parse_json(json_data)
-            
+
             # Get the request data (contains citation info)
             request_data = row.get("request", {})
             if isinstance(request_data, str):
                 request_data = _safe_parse_json(request_data)
-                
+
             # Extract citation from URL if available
             citation = None
             congress = None
             nomination_number = None
             nominee_ordinal = None
-            
+
             if isinstance(request_data, dict) and "url" in request_data:
                 url = request_data.get("url", "")
                 # Parse URL to get congress/nomination/nominee numbers
@@ -907,7 +937,7 @@ def explode_nominee_json(nominees_df: pd.DataFrame, json_col: str = "nominee") -
                     nomination_number = url_match.group(2)
                     nominee_ordinal = url_match.group(3)
                     citation = f"{congress}PN{nomination_number}"
-            
+
             # If citation not found in URL, try to get from request data
             if not citation and isinstance(body, dict) and "request" in body:
                 req = body.get("request", {})
@@ -918,63 +948,33 @@ def explode_nominee_json(nominees_df: pd.DataFrame, json_col: str = "nominee") -
                         citation = f"{cong}PN{num}"
                         congress = cong
                         nomination_number = num
-            
+
             # Add essential metadata
             metadata = {
                 "citation": citation,
                 "congress": congress,
                 "nomination_number": nomination_number,
                 "nominee_ordinal": nominee_ordinal,
-                "retrieval_date": row.get("retrieval_date")
+                "retrieval_date": row.get("retrieval_date"),
             }
-            
+
             # Process nominee information
             if "nominees" in body and isinstance(body["nominees"], list):
                 # Process each nominee in the list
                 for nominee in body["nominees"]:
                     if isinstance(nominee, dict):
                         nominee_record = {}
-                        
+
                         # Extract basic nominee information
                         for k, v in nominee.items():
                             # Handle nested objects separately
                             if not isinstance(v, (dict, list)):
                                 nominee_record[k] = v
-                        
+
                         # Add metadata for joining
                         nominee_record.update(metadata)
                         nominee_rows.append(nominee_record)
-                        
-                        # Process organizations if present
-                        if "organizations" in nominee and isinstance(nominee["organizations"], list):
-                            for org in nominee["organizations"]:
-                                if isinstance(org, dict):
-                                    org_record = {}
-                                    
-                                    # Extract organization details
-                                    for k, v in org.items():
-                                        if not isinstance(v, (dict, list)):
-                                            org_record[k] = v
-                                    
-                                    # Add metadata for joining
-                                    org_record.update(metadata)
-                                    organization_rows.append(org_record)
-                        
-                        # Process educational history if present
-                        if "educationalHistory" in nominee and isinstance(nominee["educationalHistory"], list):
-                            for edu in nominee["educationalHistory"]:
-                                if isinstance(edu, dict):
-                                    edu_record = {}
-                                    
-                                    # Extract education details
-                                    for k, v in edu.items():
-                                        if not isinstance(v, (dict, list)):
-                                            edu_record[k] = v
-                                    
-                                    # Add metadata for joining
-                                    edu_record.update(metadata)
-                                    educational_history_rows.append(edu_record)
-            
+
             # Handle pagination if present
             if "pagination" in body and isinstance(body["pagination"], dict):
                 if not nominee_rows:
@@ -984,27 +984,19 @@ def explode_nominee_json(nominees_df: pd.DataFrame, json_col: str = "nominee") -
                     }
                     nominee_record.update(metadata)
                     nominee_rows.append(nominee_record)
-                    
+
         except (json.JSONDecodeError, TypeError, AttributeError) as e:
             logger.error(f"Error processing nominee row {idx}: {str(e)}")
             continue
-    
+
     # Create DataFrames from collected rows
     nominees_df_clean = pd.DataFrame(nominee_rows) if nominee_rows else pd.DataFrame()
-    organizations_df = pd.DataFrame(organization_rows) if organization_rows else pd.DataFrame()
-    educational_history_df = pd.DataFrame(educational_history_rows) if educational_history_rows else pd.DataFrame()
-    
+
     # Report on what we've extracted
     logger.info(f"Extracted {len(nominees_df_clean)} nominee records")
-    logger.info(f"Extracted {len(organizations_df)} organization records")
-    logger.info(f"Extracted {len(educational_history_df)} educational history records")
-    
+
     # Return all extracted dataframes in a dictionary
-    return {
-        "nominees": nominees_df_clean,
-        "organizations": organizations_df,
-        "educational_history": educational_history_df
-    }
+    return nominees_df_clean
 
 
 if __name__ == "__main__":
@@ -1086,8 +1078,6 @@ def create_full_name_from_parts(
             full_name = f"{full_name} {suffix_str}"
 
     return full_name
-
-
 
 
 def extract_court_from_description(description: str) -> str:
@@ -1250,122 +1240,129 @@ def normalized_court(text: str) -> str:
 def snapshot_education(education_df: pd.DataFrame, nid: str, cutoff_date: date) -> Dict[str, str]:
     """
     Return highest degree information for a judge prior to cutoff date.
-    
+
     Args:
         education_df: Education dataframe with nid, sequence, degree, school, degree_year
         nid: Judge's NID to filter by
         cutoff_date: Only consider education completed by this date
-        
+
     Returns:
         Dictionary with highest degree and school information
     """
     # Filter by NID
     edu = education_df[education_df["nid"] == nid].copy()
-    
+
     if edu.empty:
         return {"highest_degree": "", "highest_degree_school": "", "highest_degree_year": None}
-    
+
     # Convert degree_year to integer and ensure it's before cutoff_date
     edu["degree_year"] = pd.to_numeric(edu["degree_year"], errors="coerce")
     edu = edu.dropna(subset=["degree_year"])
     edu = edu[edu["degree_year"] <= cutoff_date.year]
-    
+
     if edu.empty:
         return {"highest_degree": "", "highest_degree_school": "", "highest_degree_year": None}
-        
+
     # Map degree types to numerical levels for sorting
     degree_levels = {
-        "J.D.": 5,    # Juris Doctor
-        "LL.M.": 5,   # Master of Laws
-        "LL.B.": 4,   # Bachelor of Laws
-        "Ph.D.": 6,   # Doctorate
+        "J.D.": 5,  # Juris Doctor
+        "LL.M.": 5,  # Master of Laws
+        "LL.B.": 4,  # Bachelor of Laws
+        "Ph.D.": 6,  # Doctorate
         "S.J.D.": 6,  # Doctor of Juridical Science
-        "M.D.": 5,    # Medical Doctor
-        "M.A.": 3,    # Master of Arts
-        "M.S.": 3,    # Master of Science
+        "M.D.": 5,  # Medical Doctor
+        "M.A.": 3,  # Master of Arts
+        "M.S.": 3,  # Master of Science
         "M.B.A.": 3,  # Master of Business Administration
-        "B.A.": 2,    # Bachelor of Arts
-        "B.S.": 2,    # Bachelor of Science
-        "A.A.": 1,    # Associate of Arts
-        "A.S.": 1     # Associate of Science
+        "B.A.": 2,  # Bachelor of Arts
+        "B.S.": 2,  # Bachelor of Science
+        "A.A.": 1,  # Associate of Arts
+        "A.S.": 1,  # Associate of Science
     }
-    
+
     # Apply degree level mapping (default to 0 if not found)
-    edu["degree_level"] = edu["degree"].apply(lambda d: next((level for deg, level in degree_levels.items() 
-                                           if deg.lower() in str(d).lower()), 0))
-    
+    edu["degree_level"] = edu["degree"].apply(
+        lambda d: next(
+            (level for deg, level in degree_levels.items() if deg.lower() in str(d).lower()), 0
+        )
+    )
+
     # Sort by degree level (highest first), then by year (most recent first), then by sequence
-    edu = edu.sort_values(["degree_level", "degree_year", "sequence"], 
-                         ascending=[False, False, False])
-    
+    edu = edu.sort_values(
+        ["degree_level", "degree_year", "sequence"], ascending=[False, False, False]
+    )
+
     # Get highest degree
     top = edu.iloc[0]
-    
+
     return {
         "highest_degree": str(top["degree"]),
         "highest_degree_school": str(top["school"]),
-        "highest_degree_year": int(top["degree_year"]) if not pd.isna(top["degree_year"]) else None,
-        "has_law_degree": any("j.d." in str(d).lower() or "ll.b." in str(d).lower() 
-                            for d in edu["degree"])
+        "highest_degree_year": int(top["degree_year"])
+        if not pd.isna(top["degree_year"])
+        else None,
+        "has_law_degree": any(
+            "j.d." in str(d).lower() or "ll.b." in str(d).lower() for d in edu["degree"]
+        ),
     }
 
 
 def extract_years_from_career(career_text: str) -> Tuple[Optional[int], Optional[int]]:
     """
     Extract start and end years from career text description.
-    
+
     Args:
         career_text: Text description of career position with years
-        
+
     Returns:
         Tuple of (start_year, end_year) - end_year may be None for current positions
     """
     if pd.isna(career_text):
         return None, None
-        
+
     # Pattern for years at end of text (e.g., "1990-1995" or "1990-present" or "2000-")
-    year_pattern = r'(\d{4})(?:-(\d{4}|present|\s*))$'
+    year_pattern = r"(\d{4})(?:-(\d{4}|present|\s*))$"
     match = re.search(year_pattern, career_text)
-    
+
     if match:
         start_year = int(match.group(1))
         end_year_str = match.group(2) if match.group(2) else None
-        
+
         if end_year_str and end_year_str.isdigit():
             end_year = int(end_year_str)
         else:
             # Handle "present" or missing end year as current year
             end_year = None
         return start_year, end_year
-        
+
     # Alternative pattern when years are comma-separated (e.g., "Law clerk, Judge Smith, 1990-1991")
-    alt_pattern = r'(\d{4})-(\d{4}|present)'
+    alt_pattern = r"(\d{4})-(\d{4}|present)"
     match = re.search(alt_pattern, career_text)
-    
+
     if match:
         start_year = int(match.group(1))
         end_year_str = match.group(2)
         end_year = int(end_year_str) if end_year_str.isdigit() else None
         return start_year, end_year
-        
+
     return None, None
 
 
 def snapshot_career(career_df: pd.DataFrame, nid: str, cutoff_date: date) -> Dict[str, Any]:
     """
     Compute career snapshot features for a judge prior to cutoff date.
-    
+
     Args:
         career_df: Career dataframe with nid, sequence, professional_career columns
         nid: Judge's NID to filter by
         cutoff_date: Only consider career positions up to this date
-        
+
     Returns:
         Dictionary with aggregated career metrics
     """
     # Filter by NID
     careers = career_df[career_df["nid"] == nid].copy()
-    
+
     if careers.empty:
         return {
             "years_private_practice": 0,
@@ -1375,16 +1372,18 @@ def snapshot_career(career_df: pd.DataFrame, nid: str, cutoff_date: date) -> Dic
             "has_military_experience": False,
             "has_law_professor_experience": False,
             "has_state_judge_experience": False,
-            "has_federal_clerk_experience": False
+            "has_federal_clerk_experience": False,
         }
-        
+
     # Extract years from career descriptions
-    careers["start_year"], careers["end_year"] = zip(*careers["professional_career"].apply(extract_years_from_career))
-    
+    careers["start_year"], careers["end_year"] = zip(
+        *careers["professional_career"].apply(extract_years_from_career)
+    )
+
     # Filter by cutoff date
     careers = careers[careers["start_year"].notna()]
     careers = careers[careers["start_year"] <= cutoff_date.year]
-    
+
     if careers.empty:
         return {
             "years_private_practice": 0,
@@ -1394,12 +1393,12 @@ def snapshot_career(career_df: pd.DataFrame, nid: str, cutoff_date: date) -> Dic
             "has_military_experience": False,
             "has_law_professor_experience": False,
             "has_state_judge_experience": False,
-            "has_federal_clerk_experience": False
+            "has_federal_clerk_experience": False,
         }
-    
+
     # Calculate years in different roles
     cutoff_year = cutoff_date.year
-    
+
     # Define patterns for different career types
     career_patterns = {
         "private_practice": r"private practice|law firm|partner|associate",
@@ -1409,40 +1408,53 @@ def snapshot_career(career_df: pd.DataFrame, nid: str, cutoff_date: date) -> Dic
         "military": r"army|navy|marine|air force|military|jag|judge advocate",
         "law_professor": r"professor|faculty|lecturer|instructor|taught|law school",
         "state_judge": r"judge|justice|court|judicial|magistrate|commissioner",
-        "federal_clerk": r"clerk|clerked|clerkship"
+        "federal_clerk": r"clerk|clerked|clerkship",
     }
-    
+
     # Calculate years in private practice
     private_practice_years = 0
     for _, row in careers.iterrows():
         career_text = str(row["professional_career"]).lower()
         start_year = row["start_year"]
-        
+
         # Skip if missing start year
         if pd.isna(start_year):
             continue
-            
+
         # Use actual end year or cutoff year, whichever is earlier
         end_year = row["end_year"]
         if pd.isna(end_year) or end_year > cutoff_year:
             end_year = cutoff_year
-            
+
         if re.search(career_patterns["private_practice"], career_text):
             years = end_year - start_year
             if years > 0:
                 private_practice_years += years
-    
+
     # Check for experience in different areas
     career_text_combined = " ".join(careers["professional_career"].fillna("").str.lower())
-    
+
     return {
         "years_private_practice": private_practice_years,
-        "has_govt_experience": bool(re.search(career_patterns["govt_experience"], career_text_combined)),
-        "has_prosecutor_experience": bool(re.search(career_patterns["prosecutor"], career_text_combined)),
-        "has_public_defender_experience": bool(re.search(career_patterns["public_defender"], career_text_combined)),
-        "has_military_experience": bool(re.search(career_patterns["military"], career_text_combined)),
-        "has_law_professor_experience": bool(re.search(career_patterns["law_professor"], career_text_combined)),
-        "has_state_judge_experience": bool(re.search(career_patterns["state_judge"], career_text_combined)),
-        "has_federal_clerk_experience": bool(re.search(career_patterns["federal_clerk"], career_text_combined))
+        "has_govt_experience": bool(
+            re.search(career_patterns["govt_experience"], career_text_combined)
+        ),
+        "has_prosecutor_experience": bool(
+            re.search(career_patterns["prosecutor"], career_text_combined)
+        ),
+        "has_public_defender_experience": bool(
+            re.search(career_patterns["public_defender"], career_text_combined)
+        ),
+        "has_military_experience": bool(
+            re.search(career_patterns["military"], career_text_combined)
+        ),
+        "has_law_professor_experience": bool(
+            re.search(career_patterns["law_professor"], career_text_combined)
+        ),
+        "has_state_judge_experience": bool(
+            re.search(career_patterns["state_judge"], career_text_combined)
+        ),
+        "has_federal_clerk_experience": bool(
+            re.search(career_patterns["federal_clerk"], career_text_combined)
+        ),
     }
-
