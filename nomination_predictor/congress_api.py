@@ -198,31 +198,37 @@ def extract_nomination_data(
 
 
 class CongressAPIClient:
-    """Client for interacting with Congress.gov API."""
-    
-    BASE_URL = "https://api.congress.gov/v3"
+    """Client for accessing the Congress.gov API."""
     
     def __init__(self, api_key: Optional[str] = None):
-        """Initialize the Congress.gov API client.
+        """
+        Initialize the Congress.gov API client.
         
         Args:
-            api_key: API key for Congress.gov. If not provided,
-                attempts to use CONGRESS_API_KEY environment variable.
+            api_key: API key for authentication, defaults to CONGRESS_API_KEY environment variable
+            
+        Raises:
+            ValueError: If no API key is provided or found in environment variables
         """
-        self.api_key = api_key or os.environ.get("CONGRESS_API_KEY")
+        self.api_key = api_key or os.getenv('CONGRESS_API_KEY')
+        self.base_url = "https://api.congress.gov/v3"
         
-        # Rate limit tracking properties
-        self.request_timestamps: List[datetime] = []
-        self.max_hourly_requests: int = 5000
-        self.warning_threshold: float = 0.8  # 80% of limit
+        # Rate limiting parameters
+        self.max_hourly_requests = 5000  # Congress.gov API limit
+        self.warning_threshold = 0.8  # Start graduated delays at 80% of limit
+        self.request_timestamps = []  # Track request timestamps for rate limiting
         
-        # Retry configuration
+        # Backoff state tracking
+        self.current_backoff_ms = 0  # Current backoff in milliseconds
+        self.received_429 = False    # Whether we've received a 429 response
+        
+        # Retry parameters
         self.max_retries = 5
         self.min_wait_seconds = 2
         self.max_wait_seconds = 60
         
         if not self.api_key:
-            raise ValueError("Congress.gov API key is required")
+            raise ValueError("Congress.gov API key is required. You can sign up for one at https://api.congress.gov/sign-up/ .  Congress will then email yours to you so you can assign it to your CONGRESS_API_KEY environment variable via your `.env` file or any other method your OS likes.")
             
     def _track_request(self, count_request: bool = True) -> None:
         """Track a new API request and clean up old request timestamps.
@@ -292,16 +298,31 @@ class CongressAPIClient:
                 f"requests ({status['percent_used']:.1f}%) in the last hour"
             )
     
-    # Properly place the decorator directly above the method
-    @retry(
-        retry=retry_if_exception_type((requests.exceptions.RequestException, ConnectionError)),
-        wait=wait_exponential(multiplier=1, min=2, max=60),
-        stop=stop_after_attempt(5),
-        before_sleep=before_sleep_log(_tenacity_logger, logging.WARNING),
-    )            
+    def _calculate_self_delay(self) -> float:
+        """
+        Calculate a self-imposed delay based on current rate limit usage.
+        
+        Returns:
+            Delay in seconds to apply before making a request
+        """
+        status = self.get_rate_limit_status()
+        percent_used = status["percent_used"]
+        
+        # Only apply graduated delays between 80% and 100% utilization
+        if percent_used < 80:
+            return 0.0
+            
+        # Linear increase from 0ms at 80% to 500ms at 100%
+        if percent_used <= 100:
+            # Map 80-100% to 0-500ms
+            return (percent_used - 80) * 0.025  # 500ms / 20% = 25ms per percentage point
+        
+        # At >100%, maintain the same delay as at 100% (500ms)
+        return 0.5
+    
     def _make_request(self, url: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Make a request to the Congress.gov API with automatic retries.
+        Make a request to the Congress.gov API with self-managed rate limiting and backoff.
         
         Args:
             url: Full API URL
@@ -320,39 +341,93 @@ class CongressAPIClient:
         # Track this request for rate limit monitoring
         self._track_request()
         
-        # Check if we might be approaching/exceeding rate limit
-        status = self.get_rate_limit_status()
-        if status["is_exceeded"]:
-            logger.error(f"Rate limit exceeded ({status['percent_used']:.1f}%). Request may fail.")
-        elif status["is_warning"]:
-            logger.warning(f"Approaching rate limit ({status['percent_used']:.1f}%).")
+        # Apply self-delay based on current rate limit usage
+        self_delay = self._calculate_self_delay()
+        
+        # If we've received a 429 recently, apply exponential backoff
+        # Otherwise just use the self-delay
+        if self.received_429 and self.current_backoff_ms > 0:
+            delay = self.current_backoff_ms / 1000  # Convert ms to seconds
+            logger.warning(f"Applying exponential backoff delay of {delay:.2f}s due to previous 429")
+        elif self_delay > 0:
+            delay = self_delay
+            logger.debug(f"Applying graduated self-delay of {delay:.2f}s ({self.get_rate_limit_status()['percent_used']:.1f}% utilization)")
+        else:
+            delay = 0
+            
+        if delay > 0:
+            time.sleep(delay)
         
         # Make the request
-        response = requests.get(url, params=params)
+        max_retries = self.max_retries
+        attempts = 0
         
-        # Handle HTTP errors
-        if response.status_code == 429:
-            logger.warning(f"Rate limit hit (HTTP 429). Will retry after backoff.")
-            response.raise_for_status()  # This will be caught by the retry decorator
-            
-        if response.status_code != 200:
-            logger.error(f"API request failed with status {response.status_code}: {response.text}")
-            response.raise_for_status()
-            
-        # Parse and return JSON data
-        try:
-            return response.json()
-        except ValueError:
-            logger.error(f"Invalid JSON response: {response.text[:100]}...")
-            raise ValueError(f"Invalid JSON response from API: {response.text[:100]}...")
+        while attempts < max_retries:
+            attempts += 1
+            try:
+                response = requests.get(url, params=params)
+                
+                # Handle rate limit (429) responses
+                if response.status_code == 429:
+                    self.received_429 = True
+                    
+                    # Apply exponential backoff
+                    if self.current_backoff_ms == 0:
+                        self.current_backoff_ms = 1000  # Start with 1 second
+                    else:
+                        self.current_backoff_ms = min(self.current_backoff_ms * 2, self.max_wait_seconds * 1000)
+                    
+                    wait_time = self.current_backoff_ms / 1000
+                    logger.warning(f"Rate limit hit (HTTP 429). Backing off for {wait_time:.1f}s. Attempt {attempts}/{max_retries}")
+                    
+                    time.sleep(wait_time)
+                    continue
+                    
+                # Handle other HTTP errors
+                if response.status_code != 200:
+                    logger.error(f"API request failed with status {response.status_code}: {response.text}")
+                    
+                    # For non-429 errors, use a simple retry with linear backoff
+                    if attempts < max_retries:
+                        wait_time = self.min_wait_seconds * attempts
+                        logger.warning(f"Retrying in {wait_time}s. Attempt {attempts}/{max_retries}")
+                        time.sleep(wait_time)
+                        continue
+                    
+                    response.raise_for_status()
+                
+                # Success - gradually reduce backoff
+                if self.current_backoff_ms > 0:
+                    # Linear decay: reduce by 25% on each successful request
+                    self.current_backoff_ms = int(self.current_backoff_ms * 0.75)
+                    if self.current_backoff_ms < 100:  # If less than 100ms, reset completely
+                        self.current_backoff_ms = 0
+                        self.received_429 = False
+                
+                # Parse and return JSON data
+                try:
+                    return response.json()
+                except ValueError:
+                    logger.error(f"Invalid JSON response: {response.text[:100]}...")
+                    if attempts < max_retries:
+                        wait_time = self.min_wait_seconds * attempts
+                        logger.warning(f"Retrying after JSON parse error in {wait_time}s. Attempt {attempts}/{max_retries}")
+                        time.sleep(wait_time)
+                        continue
+                    raise ValueError(f"Invalid JSON response from API: {response.text[:100]}...")
+                    
+            except (requests.exceptions.RequestException, ConnectionError) as e:
+                if attempts >= max_retries:
+                    logger.error(f"Failed after {max_retries} attempts: {str(e)}")
+                    raise
+                
+                wait_time = self.min_wait_seconds * attempts
+                logger.warning(f"Request error: {str(e)}. Retrying in {wait_time}s. Attempt {attempts}/{max_retries}")
+                time.sleep(wait_time)
+        
+        # This should never happen, but just in case
+        raise RuntimeError(f"Failed to complete request after {max_retries} attempts with no specific error")
     
-    # Properly place the decorator directly above the method
-    @retry(
-        retry=retry_if_exception_type((requests.exceptions.RequestException, ConnectionError)),
-        wait=wait_exponential(multiplier=1, min=2, max=60),
-        stop=stop_after_attempt(5),
-        before_sleep=before_sleep_log(_tenacity_logger, logging.WARNING),
-    )
     def get_nominations(
         self, congress: int, params: Optional[Dict[str, Any]] = None, auto_paginate: bool = True
     ) -> Dict[str, Any]:
@@ -507,46 +582,46 @@ class CongressAPIClient:
         # for the current environment (notebook or terminal)
         progress_iterator = tqdm(nominee_urls, total=total, desc="Fetching nominees") if show_progress else nominee_urls
         
-        for url in progress_iterator:
+        # Add counters for logging status at regular intervals
+        success_count = 0
+        error_count = 0
+        last_log_time = time.time()
+        log_interval = 10  # Log status every 10 seconds
+        
+        for i, url in enumerate(nominee_urls):
+            # Update progress bar description frequently for visibility
+            if show_progress:
+                progress_iterator.set_description(f"Fetching nominee {i+1}/{total}")
+                progress_iterator.update(0)  # Force refresh without advancing
+            
+            # Periodically log progress to notebook/console for visibility
+            current_time = time.time()
+            if current_time - last_log_time > log_interval:
+                logger.info(f"Progress: {i+1}/{total} nominees processed ({success_count} successful, {error_count} errors)")
+                last_log_time = current_time
             try:
                 # Check if we're approaching rate limit
                 rate_status = self.get_rate_limit_status()
                 
-                if rate_status['is_exceeded']:
-                    # Calculate backoff time - starts with 60 seconds and can increase
-                    # Hour has 3600 seconds, so we want to wait for approximately
-                    # enough time for the oldest requests to drop out of the window
-                    backoff_seconds = min(60 * (2 ** (rate_status['percent_used'] / 100 - 1)), 900)  # Cap at 15 minutes
-                    
-                    logger.warning(f"API rate limit exceeded. Backing off for {backoff_seconds:.1f} seconds")
-                    
-                    if show_progress:
-                        original_desc = progress_iterator.desc
-                        for remaining in range(int(backoff_seconds), 0, -1):
-                            progress_iterator.set_description(
-                                f"Rate limit hit - waiting {remaining}s"
-                            )
-                            time.sleep(1)
-                        progress_iterator.set_description(original_desc)
-                    else:
-                        time.sleep(backoff_seconds)
-                        
-                    logger.info("Resuming nominee data collection after backoff")
-                    
-                elif rate_status['is_warning']:
+                # Apply small graduated delays if approaching limits, but avoid redundant exponential backoff
+                # since the _make_request method already handles HTTP 429 responses with proper backoff
+                if rate_status['is_warning']:
+                    # Log warning once
                     warning_msg = f"API rate limit warning: {rate_status['percent_used']:.1f}% used"
                     logger.warning(warning_msg)
+                    
+                    # Linear delay increase as we approach the rate limit
+                    percent_over_warning = (rate_status['percent_used'] - 80) / 20
+                    delay = max(0.0, min(1.0, percent_over_warning)) * 0.5  # 0 to 0.5 seconds
+                    
                     if show_progress:
                         # Update progress bar description to show warning
-                        progress_iterator.set_description(f"Fetching nominees (Rate limit: {rate_status['percent_used']:.1f}%)")
-                        
-                    # Introduce a small delay when approaching limits
-                    if rate_status['percent_used'] > 90:
-                        delay = 2.0  # 2 seconds when very close to limit
-                    else:
-                        delay = 0.5  # 0.5 seconds when just at warning threshold
-                        
-                    time.sleep(delay)
+                        progress_iterator.set_description(
+                            f"Processing: {url.split('/')[-1]} (Rate: {rate_status['percent_used']:.1f}%)"
+                        )
+                    
+                    if delay > 0:
+                        time.sleep(delay)
                 
                 # Get nominee data
                 nominee_data = self.get_nominee_data(url)
@@ -565,13 +640,23 @@ class CongressAPIClient:
                 }
                 
                 all_nominees.append(nominee_entry)
+                success_count += 1
+                
+                # Explicitly update progress for notebook visibility
+                if show_progress:
+                    progress_iterator.set_postfix_str(f"Success: {success_count}, Errors: {error_count}")
+                    progress_iterator.update(1)  # Advance the progress bar
                     
             except Exception as e:
                 error_msg = f"Error processing nominee URL {url}: {str(e)}"
                 logger.error(error_msg)
+                error_count += 1
+                
                 if show_progress:
-                    # Update progress bar postfix to show last error
-                    progress_iterator.set_postfix_str(f"Last error: {str(e)[:30]}..." if len(str(e)) > 30 else f"Last error: {str(e)}")
+                    # Update progress bar postfix to show error count
+                    progress_iterator.set_postfix_str(f"Success: {success_count}, Errors: {error_count}, Last error: {str(e)[:30]}..." if len(str(e)) > 30 else f"Success: {success_count}, Errors: {error_count}, Last error: {str(e)}")
+                    progress_iterator.update(1)  # Advance the progress bar
+                
                 # Continue with next nominee instead of failing the entire batch
         
         # Print final rate limit status after processing all nominees
@@ -628,7 +713,25 @@ class CongressAPIClient:
         use_progress_bar = len(judicial_nominations) > 10
         nominations_iter = tqdm(judicial_nominations, desc="Fetching nomination details") if use_progress_bar else judicial_nominations
         
-        for i, nomination in enumerate(nominations_iter):
+        # Add counters for logging status at regular intervals
+        success_count = 0
+        error_count = 0
+        detail_count = 0
+        summary_count = 0
+        last_log_time = time.time()
+        log_interval = 10  # Log status every 10 seconds
+        
+        for i, nomination in enumerate(judicial_nominations):
+            # Update progress bar description frequently for visibility
+            if use_progress_bar:
+                nominations_iter.set_description(f"Fetching nomination {i+1}/{len(judicial_nominations)}")
+                nominations_iter.update(0)  # Force refresh without advancing
+            
+            # Periodically log progress to notebook/console for visibility
+            current_time = time.time()
+            if current_time - last_log_time > log_interval:
+                logger.info(f"Progress: {i+1}/{len(judicial_nominations)} nominations processed ({detail_count} detail, {summary_count} summary, {error_count} errors)")
+                last_log_time = current_time
             congress_number = nomination.get("congress")
             nomination_number = nomination.get("number")
             
@@ -641,42 +744,25 @@ class CongressAPIClient:
             else:
                 logger.info(f"Processing judicial nomination {i+1}/{len(judicial_nominations)}: {nomination_number}")
             
-            # Check rate limits and apply graduated delays if needed
+            # Apply small graduated delays if approaching limits, but avoid redundant exponential backoff
+            # since the _make_request method already handles HTTP 429 responses with proper backoff
             rate_status = self.get_rate_limit_status()
             
-            if rate_status['is_exceeded']:
-                # Calculate backoff time - starts with 60 seconds and can increase
-                # Cap at 15 minutes to avoid excessive waits
-                backoff_seconds = min(60 * (2 ** (rate_status['percent_used'] / 100 - 1)), 900)
-                
-                logger.warning(f"API rate limit exceeded. Backing off for {backoff_seconds:.1f} seconds")
-                
-                if use_progress_bar:
-                    original_desc = nominations_iter.desc
-                    for remaining in range(int(backoff_seconds), 0, -1):
-                        nominations_iter.set_description(f"Rate limit hit - waiting {remaining}s")
-                        time.sleep(1)
-                    nominations_iter.set_description(original_desc)
-                else:
-                    time.sleep(backoff_seconds)
-                    
-                logger.info("Resuming nomination data collection after backoff")
-                
-            elif rate_status['is_warning']:
+            if rate_status['is_warning']:
+                # Log warning once
                 warning_msg = f"API rate limit warning: {rate_status['percent_used']:.1f}% used"
                 logger.warning(warning_msg)
+                
+                # Linear delay increase as we approach the rate limit
+                percent_over_warning = (rate_status['percent_used'] - 80) / 20
+                delay = max(0.0, min(1.0, percent_over_warning)) * 0.5  # 0 to 0.5 seconds
                 
                 if use_progress_bar:
                     # Update progress bar description to show warning
                     nominations_iter.set_description(f"Processing: {nomination_number} (Rate: {rate_status['percent_used']:.1f}%)")
                 
-                # Introduce a small delay when approaching limits
-                if rate_status['percent_used'] > 90:
-                    delay = 2.0  # 2 seconds when very close to limit
-                else:
-                    delay = 0.5  # 0.5 seconds when just at warning threshold
-                    
-                time.sleep(delay)
+                if delay > 0:
+                    time.sleep(delay)
             
             # First extract records from summary data as fallback
             summary_records = extract_nomination_data(nomination, full_details=False)
@@ -696,26 +782,49 @@ class CongressAPIClient:
                 
                 if records:
                     detailed_records.extend(records)
+                    detail_count += len(records)
+                    success_count += 1
                     logger.info(f"Added {len(records)} detail-level records for nomination {nomination_number}")
+                    
+                    # Update progress bar
+                    if use_progress_bar:
+                        nominations_iter.set_postfix_str(f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}")
+                        nominations_iter.update(1)  # Advance the progress bar
                 else:
                     # If no detailed records, use the summary records
                     logger.warning(f"No detail records created for {nomination_number}, falling back to summary")
                     detailed_records.extend(summary_records)
+                    summary_count += len(summary_records)
+                    success_count += 1
                     logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number}")
+                    
+                    # Update progress bar
+                    if use_progress_bar:
+                        nominations_iter.set_postfix_str(f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}")
+                        nominations_iter.update(1)  # Advance the progress bar
             except requests.exceptions.RequestException as e:
                 # This exception would have been retried by the decorator on get_nomination_detail
                 # If we're here, we've exhausted all retries
                 logger.error(f"Error processing nomination {nomination_number} after all retries: {str(e)}")
                 # Fall back to summary records after retry attempts
                 detailed_records.extend(summary_records)
+                summary_count += len(summary_records)
+                error_count += 1
+                
                 logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number} (after retry failure)")
                 # Print traceback for easier debugging
                 traceback.print_exc()
+                
+                # Update progress bar to show the error
+                if use_progress_bar:
+                    nominations_iter.set_postfix_str(f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}, Last error: {str(e)[:30]}..." if len(str(e)) > 30 else f"Details: {detail_count}, Summary: {summary_count}, Errors: {error_count}, Last error: {str(e)}")
+                    nominations_iter.update(1)  # Advance the progress bar
         
         # Print final rate limit status after processing all nominations
         self.print_rate_limit_summary()
                 
-        logger.info(f"Found {len(detailed_records)} detailed judicial nomination records")
+        # Add comprehensive final status log with all counts
+        logger.info(f"Processing complete - Summary: {success_count} nominations processed successfully, {detail_count} detail records, {summary_count} summary records, {error_count} errors")
+        logger.info(f"Found {len(detailed_records)} total judicial nomination records for Congress {congress}")
         
-        logger.info(f"Processed {len(detailed_records)} total judicial nomination records for Congress {congress}")
         return detailed_records

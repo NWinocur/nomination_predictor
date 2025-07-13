@@ -10,8 +10,10 @@ Given a vacancy is on record as having existed in a specified court, with a name
 Given a nomination is on record as having occurred on a specified date, when filling in date-dependent feature data (e.g. which President performed the nomination), then the interim data shall be updated to include date-inferred data (e.g. a numeric ordinal indicator identifying that President who was in office on the date of nomination.
 """
 
+import ast
 from datetime import date, timedelta
 from functools import lru_cache
+import json
 from pathlib import Path
 import re
 from typing import Any, Dict, Iterator, Optional, Tuple
@@ -280,9 +282,9 @@ def enrich_fjc_judges(judges_df: pd.DataFrame) -> pd.DataFrame:
     return enriched_df
 
 
-def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
+def load_simpler_dataframes(raw_data_dir: Path = RAW_DATA_DIR) -> Dict[str, pd.DataFrame]:
     """
-    Load and prepare dataframes needed for feature engineering.
+    Load and prepare simpler (our non-JSON-containing) dataframes needed for feature engineering.
 
     Args:
         raw_data_dir: Path to raw data directory
@@ -301,13 +303,9 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
         )
         fjc_other_nominations_recess = pd.read_csv(raw_data_dir / "other_nominations_recess.csv")
         seat_timeline = pd.read_csv(raw_data_dir / "seat_timeline.csv")
-        cong_nominees = pd.read_csv(raw_data_dir / "nominees.csv")
-        cong_nominations = pd.read_csv(raw_data_dir / "nominations.csv")
+        #cong_nominees = pd.read_csv(raw_data_dir / "nominees.csv")
+        #cong_nominations = pd.read_csv(raw_data_dir / "nominations.csv")
 
-        logger.info(
-            f"Loaded {len(fjc_judges)} judges, {len(fjc_federal_judicial_service)} service records, "
-            f"{len(cong_nominees)} congress nominees, {len(cong_nominations)} nominations"
-        )
 
         # Return all dataframes
         return {
@@ -318,8 +316,8 @@ def load_and_prepare_dataframes(raw_data_dir: Path) -> Dict[str, pd.DataFrame]:
             "fjc_other_federal_judicial_service": fjc_other_federal_judicial_service,
             "fjc_other_nominations_recess": fjc_other_nominations_recess,
             "seat_timeline": seat_timeline,
-            "cong_nominees": cong_nominees,
-            "cong_nominations": cong_nominations,
+            #"cong_nominees": cong_nominees,
+            #"cong_nominations": cong_nominations,
         }
     except Exception as e:
         logger.error(f"Error loading dataframes: {e}")
@@ -582,6 +580,257 @@ def filter_non_judicial_nominations(
     )
 
     return filtered_nominations, filtered_nominees
+
+
+def _safe_parse_json(json_str: str) -> dict:
+    """
+    Robustly parse a JSON string that might not be strictly JSON compliant (e.g., with single quotes).
+    
+    Args:
+        json_str: String representation of JSON/dict, possibly with single quotes
+        
+    Returns:
+        Parsed dictionary
+    """
+    if not isinstance(json_str, str):
+        # If it's already a dictionary, return it directly
+        return json_str if isinstance(json_str, dict) else {}
+        
+    try:
+        # First try standard JSON parsing
+        return json.loads(json_str)
+    except json.JSONDecodeError:
+        # If that fails, try ast.literal_eval which can handle Python dict literals
+        try:
+            return ast.literal_eval(json_str)
+        except (SyntaxError, ValueError):
+            # If that also fails, try a custom approach for handling single quotes
+            try:
+                # Handle single quotes -> double quotes carefully to avoid breaking valid JSON strings
+                # This uses a regex to avoid replacing quotes inside already quoted strings
+                # We do multiple replacements to handle nested structures properly
+                processed = json_str
+                # Step 1: Replace single-quoted strings with specially marked strings  
+                processed = re.sub(r"'([^']*)'(?=\s*[:,}\]])", r'"\1"', processed)
+                # Step 2: Replace remaining property names with double-quoted ones
+                processed = re.sub(r"([{,]\s*)'([^']*)'", r'\1"\2"', processed)
+                # Step 3: Try to parse
+                return json.loads(processed)
+            except (json.JSONDecodeError, re.error):
+                # Last resort: Try to normalize common patterns
+                try:
+                    # Replace single quotes with double quotes
+                    s = json_str.replace("'", '"')
+                    # Fix True/False/None literals
+                    s = s.replace('True', 'true').replace('False', 'false').replace('None', 'null')
+                    return json.loads(s)
+                except Exception as e:
+                    # If all attempts fail, log the error and return empty dict
+                    logger.error(f"Could not parse JSON string: {json_str[:100]}...")
+                    return {}
+
+
+def explode_nomination_json(nominations_df: pd.DataFrame, json_col: str = "nomination") -> Dict[str, pd.DataFrame]:
+    """
+    Extract all fields from JSON-containing nomination DataFrame into structured tables.
+    This function preserves all fields from the original JSON to maintain data integrity.
+    Uses robust parsing to handle non-standard JSON formats commonly found in CSVs.
+    
+    Args:
+        nominations_df: DataFrame with JSON data in specified column (usually 'nomination')
+        json_col: Name of the column containing the JSON data
+        
+    Returns:
+        Dictionary with normalized DataFrames: 'nominations', 'nominees', 'actions', etc.
+    """
+    if json_col not in nominations_df.columns:
+        raise ValueError(f"nominations_df must contain '{json_col}' column")
+        
+    nom_rows, nominee_rows, action_rows, committee_rows, hearing_rows = [], [], [], [], []
+    
+    logger.info(f"Processing {len(nominations_df)} nomination records")
+    
+    # Process each row with error handling
+    for idx, row in tqdm(nominations_df.iterrows(), total=len(nominations_df), desc="Extracting JSON data"):
+        try:
+            # Use robust parsing to handle various JSON/dict string formats
+            json_data = row[json_col]
+            body = _safe_parse_json(json_data)
+            
+            # Add essential metadata from the dataframe row
+            metadata = {
+                "citation": body.get("citation"),
+                "congress": body.get("congress"),
+                "retrieval_date": row.get("retrieval_date")
+            }
+            
+            # -------------- NOMINATIONS TABLE --------------
+            # Extract all top-level scalar fields
+            nom_record = {}
+            
+            # Add all scalar values directly
+            for key, value in body.items():
+                # Skip complex objects that are handled separately
+                if isinstance(value, dict) and any(k in key.lower() for k in ["nominees", "actions", "committees", "hearings"]):
+                    continue
+                    
+                # Include all scalar values and simple lists
+                if not isinstance(value, dict):
+                    nom_record[key] = value
+            
+            # Handle latestAction specially (it's a common nested dict)
+            if "latestAction" in body and isinstance(body["latestAction"], dict):
+                for k, v in body["latestAction"].items():
+                    nom_record[f"latest_action_{k}"] = v
+            
+            # Handle nominationType specially (it's a common nested dict)
+            if "nominationType" in body and isinstance(body["nominationType"], dict):
+                for k, v in body["nominationType"].items():
+                    nom_record[f"nomination_type_{k}"] = v
+                    
+            # Add the metadata
+            nom_record.update(metadata)
+            nom_rows.append(nom_record)
+            
+            # -------------- NOMINEES TABLE --------------
+            if "nominees" in body and isinstance(body["nominees"], dict) and "items" in body["nominees"]:
+                for nominee in body["nominees"].get("items", []):
+                    if isinstance(nominee, dict):
+                        nominee_record = {}
+                        
+                        # Extract all direct scalar fields from nominee
+                        for k, v in nominee.items():
+                            if not isinstance(v, dict):
+                                nominee_record[k] = v
+                                
+                        # Handle nested position data
+                        if "position" in nominee and isinstance(nominee["position"], dict):
+                            for pos_k, pos_v in nominee["position"].items():
+                                nominee_record[f"position_{pos_k}"] = pos_v
+                        
+                        # Add metadata for joining
+                        nominee_record.update(metadata)
+                        nominee_rows.append(nominee_record)
+                        
+            # Check for nominee details at the URL endpoint
+            if "nominees" in body and "url" in body["nominees"]:
+                nominee_record = {
+                    "nominees_url": body["nominees"].get("url"),
+                    "nominees_count": body["nominees"].get("count")
+                }
+                nominee_record.update(metadata)
+                
+                # Only add if not already captured from items
+                if not any(n.get("nominees_url") == nominee_record["nominees_url"] for n in nominee_rows):
+                    nominee_rows.append(nominee_record)
+            
+            # -------------- ACTIONS TABLE --------------
+            if "actions" in body and isinstance(body["actions"], dict) and "items" in body["actions"]:
+                for action in body["actions"].get("items", []):
+                    if isinstance(action, dict):
+                        action_record = {}
+                        
+                        # Extract all direct fields from action
+                        for k, v in action.items():
+                            if not isinstance(v, dict):
+                                action_record[k] = v
+                                
+                        # Add metadata for joining
+                        action_record.update(metadata)
+                        action_rows.append(action_record)
+            
+            # If actions aren't in items but URL is available
+            if "actions" in body and "url" in body["actions"]:
+                action_record = {
+                    "actions_url": body["actions"].get("url"),
+                    "actions_count": body["actions"].get("count")
+                }
+                action_record.update(metadata)
+                
+                # Only add if we don't have detailed actions
+                if not any(a.get("actions_url") == action_record["actions_url"] for a in action_rows):
+                    action_rows.append(action_record)
+            
+            # -------------- COMMITTEES TABLE --------------
+            if "committees" in body and isinstance(body["committees"], dict) and "items" in body["committees"]:
+                for committee in body["committees"].get("items", []):
+                    if isinstance(committee, dict):
+                        committee_record = {}
+                        
+                        # Extract all direct fields
+                        for k, v in committee.items():
+                            if not isinstance(v, dict):
+                                committee_record[k] = v
+                                
+                        # Add metadata for joining
+                        committee_record.update(metadata)
+                        committee_rows.append(committee_record)
+            
+            # If committee URL available but no items
+            if "committees" in body and "url" in body["committees"]:
+                committee_record = {
+                    "committees_url": body["committees"].get("url"),
+                    "committees_count": body["committees"].get("count")
+                }
+                committee_record.update(metadata)
+                
+                # Only add if we don't have detailed committees
+                if not any(c.get("committees_url") == committee_record["committees_url"] for c in committee_rows):
+                    committee_rows.append(committee_record)
+            
+            # -------------- HEARINGS TABLE --------------
+            if "hearings" in body and isinstance(body["hearings"], dict) and "items" in body["hearings"]:
+                for hearing in body["hearings"].get("items", []):
+                    if isinstance(hearing, dict):
+                        hearing_record = {}
+                        
+                        # Extract all direct fields
+                        for k, v in hearing.items():
+                            if not isinstance(v, dict):
+                                hearing_record[k] = v
+                                
+                        # Add metadata for joining
+                        hearing_record.update(metadata)
+                        hearing_rows.append(hearing_record)
+            
+            # If hearings URL available but no items
+            if "hearings" in body and "url" in body["hearings"]:
+                hearing_record = {
+                    "hearings_url": body["hearings"].get("url"),
+                    "hearings_count": body["hearings"].get("count")
+                }
+                hearing_record.update(metadata)
+                
+                # Only add if we don't have detailed hearings
+                if not any(h.get("hearings_url") == hearing_record["hearings_url"] for h in hearing_rows):
+                    hearing_rows.append(hearing_record)
+                
+        except (json.JSONDecodeError, TypeError, AttributeError) as e:
+            logger.error(f"Error processing row {idx}: {str(e)}")
+            continue
+    
+    # Create DataFrames from collected rows
+    nominations_df_clean = pd.DataFrame(nom_rows) if nom_rows else pd.DataFrame()
+    nominees_df = pd.DataFrame(nominee_rows) if nominee_rows else pd.DataFrame()
+    actions_df = pd.DataFrame(action_rows) if action_rows else pd.DataFrame()
+    committees_df = pd.DataFrame(committee_rows) if committee_rows else pd.DataFrame()
+    hearings_df = pd.DataFrame(hearing_rows) if hearing_rows else pd.DataFrame()
+    
+    # Report on what we've extracted
+    logger.info(f"Extracted {len(nominations_df_clean)} nomination records")
+    logger.info(f"Extracted {len(nominees_df)} nominee records")
+    logger.info(f"Extracted {len(actions_df)} action records")
+    logger.info(f"Extracted {len(committees_df)} committee records")
+    logger.info(f"Extracted {len(hearings_df)} hearing records")
+    
+    # Return all extracted dataframes in a dictionary
+    return {
+        "nominations": nominations_df_clean,
+        "nominees": nominees_df,
+        "actions": actions_df,
+        "committees": committees_df,
+        "hearings": hearings_df
+    }
 
 
 if __name__ == "__main__":
