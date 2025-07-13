@@ -20,12 +20,13 @@
       "crosswalking",
       "figsize",
       "ipython",
+      "Juris",
+      "latestaction",
       "middlename",
       "nids",
       "pathlib",
       "rapidfuzz",
       "receiveddate",
-      "urlparse",
-      "latestaction",
+      "urlparse"
     ],
 }

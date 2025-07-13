@@ -9,9 +9,10 @@ For data cleaning and transformation, see the data_cleaning.py and features.py m
 """
 
 from datetime import datetime
+import os
 from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
 from IPython.display import display  # For notebook previews
 from loguru import logger
@@ -346,6 +347,136 @@ def _is_valid_date(date_str: str) -> bool:
     except (ValueError, IndexError):
         return False
 
+def fetch_judicial_nominations(
+    congress_client: CongressAPIClient, 
+    most_recent_congress: int = 118, 
+    oldest_congress: int = 96,
+    auto_paginate: bool = True,
+    cache_file: Optional[str] = None
+) -> Tuple[pd.DataFrame, bool]:
+    """
+    Fetch judicial nominations from Congress.gov API for specified Congress terms.
+    
+    Args:
+        congress_client: Initialized CongressAPIClient
+        most_recent_congress: Most recent Congress term to fetch (default: 118)
+        oldest_congress: Oldest Congress term to fetch (default: 96)
+        auto_paginate: Whether to automatically paginate API results (default: True)
+        cache_file: Path to cache file (default: None)
+        
+    Returns:
+        Tuple of (nominations DataFrame, success flag)
+    """
+    # Define cache file path for nominations if not provided
+    if cache_file is None:
+        cache_file = os.path.join(RAW_DATA_DIR, "nominations.csv")
+    
+    # Check if we have cached data
+    if os.path.exists(cache_file):
+        logger.info(f"Found cached nominations data at {cache_file}")
+        nominations_df = pd.read_csv(cache_file, parse_dates=['retrieval_date'])
+        logger.info(f"Loaded {len(nominations_df)} nominations from cache; see dataframe's retrieval_date column to check when this data was fetched")
+        
+        # Check if the DataFrame is empty or has suspiciously few rows
+        if len(nominations_df) == 0:
+            logger.error(f"Cache file exists but contains no nominations: {cache_file}")
+            return nominations_df, False
+            
+        return nominations_df, True
+    
+    # If no cache, fetch from API
+    all_nominations = []
+    congresses = range(most_recent_congress, oldest_congress-1, -1)
+    success = False
+    
+    for congress in congresses:
+        try:
+            logger.info(f"Fetching judicial nominations for the {congress}th Congress...")
+            nominations = congress_client.get_judicial_nominations(congress, auto_paginate=auto_paginate)
+            if nominations:
+                logger.info(f"  ✓ Retrieved {len(nominations)} judicial nominations")
+                all_nominations.extend(nominations)
+                success = True  # Mark as successful if we get at least one batch
+            else:
+                logger.warning(f"  ⚠️ No judicial nominations found for the {congress}th Congress")
+        except Exception as e:
+            logger.error(f"  ❌ Error fetching nominations for {congress}th Congress: {str(e)}")
+            # Continue to next Congress rather than failing completely
+    
+    # Convert to DataFrame
+    if all_nominations:
+        nominations_df = pd.DataFrame(all_nominations)
+        logger.info(f"\nTotal nominations retrieved: {len(nominations_df)}")
+        
+        # Save to cache if we have data
+        try:
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            nominations_df.to_csv(cache_file, index=False)
+            logger.info(f"Saved nominations to {cache_file}")
+        except Exception as e:
+            logger.error(f"Error saving nominations to cache: {e}")
+    else:
+        logger.error("No nominations were retrieved from any Congress")
+        nominations_df = pd.DataFrame()  # Return empty DataFrame
+        success = False
+    
+    # Final validation
+    if len(nominations_df) == 0:
+        logger.error("Retrieved empty nominations DataFrame")
+        success = False
+    
+    return nominations_df, success
+
+
+def extract_nominee_urls_from_nominations_df(nominations_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Extract nominee URLs from nominations DataFrame with JSON-structured data.
+    
+    Works with the new JSON-preserving format where nomination data is stored
+    as a complete JSON object in the 'nomination' column.
+    
+    Args:
+        nominations_df: DataFrame containing nomination data with JSON structure
+        
+    Returns:
+        DataFrame with columns: citation, nominee_url, congress, number
+    """
+    import json
+
+    from loguru import logger
+    
+    # Create an empty list to store URLs
+    nominee_urls = []
+    
+    if 'nomination' not in nominations_df.columns:
+        logger.error("No 'nomination' column found in nominations DataFrame")
+        return pd.DataFrame()
+        
+    # Loop through each nomination
+    for _, row in nominations_df.iterrows():
+        try:
+            # Parse the nomination JSON if it's a string, or use as-is if already parsed
+            if isinstance(row['nomination'], str):
+                nomination_data = json.loads(row['nomination'])
+            else:
+                nomination_data = row['nomination']
+                
+            # Extract nominees array
+            nominees = nomination_data.get('nominees', [])
+            
+            # Add all nominee URLs to the list
+            for nominee in nominees:
+                if 'url' in nominee:
+                    nominee_urls.append({
+                        'citation': nomination_data.get('citation'),
+                        'nominee_url': nominee['url'],
+                        'congress': nomination_data.get('congress'),
+                        'number': nomination_data.get('number')
+                    })
+        except Exception as e:
+            logger.error(f"Error extracting nominee URL: {e}")
+            
+    return pd.DataFrame(nominee_urls)
 
 
 def fetch_data_from_congress_api(

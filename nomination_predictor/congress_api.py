@@ -1,6 +1,7 @@
 """Client for fetching judicial nomination data from Congress.gov API."""
 
 from datetime import datetime, timedelta
+import logging
 import os
 import re
 import traceback
@@ -15,6 +16,14 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+
+# Configure standard logger for tenacity (which doesn't work with loguru)
+_tenacity_logger = logging.getLogger("tenacity")
+_tenacity_logger.setLevel(logging.WARNING)
+if not _tenacity_logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    _tenacity_logger.addHandler(handler)
 
 # Tokens that may indicate a judicial nomination when found in description/position/text etc. fields
 JUDICIAL_DESC_TOKENS = [
@@ -95,99 +104,66 @@ def parse_court_from_description(description: str) -> Tuple[Optional[str], Optio
             "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV",
             "Wisconsin": "WI", "Wyoming": "WY", "District of Columbia": "DC",
             "Puerto Rico": "PR", "Virgin Islands": "VI", "Guam": "GU",
-            "American Samoa": "AS", "Northern Mariana Islands": "MP"
+            "Northern Mariana Islands": "MP", "American Samoa": "AS"
         }
+        
         state_code = state_mapping.get(state_name)
         if state_code:
-            court = f"{state_code}-{direction}"
-        else:
-            court = None
-    else:
-        court = None
+            if direction:
+                court = f"{direction}{state_code}"  # e.g., "NCA" for Northern District of California
+            else:
+                court = state_code  # e.g., "CA" for District of California
     
     return circuit, court
 
 
-# normalize_column_names function has been removed
-# Column name normalization is now handled in the data cleaning notebook
-# to maintain separation of concerns between data fetching and data processing
-
-
-def extract_nominee_data(nominee_data: Dict[str, Any]) -> Dict[str, Any]:
+def extract_nomination_data(
+    nomination_data: Dict[str, Any], full_details: bool = False
+) -> List[Dict[str, Any]]:
     """
-    Extract nominee-specific data from Congress.gov API nominee endpoint response,
-    preserving original values and structure. Only normalizes column names.
+    Extract data from a nomination record.
     
     Args:
-        nominee_data: Nominee data from Congress.gov API
+        nomination_data: Nomination data from API
+        full_details: Whether this is detailed nomination data
         
     Returns:
-        Dictionary with nominee data and minimal transformations
+        List of dictionaries with extracted data
     """
-    logger.debug("Extracting nominee data from API response")
-    
-    # Create a record with original API data values
-    record = {}
-    
-    # Copy all non-nested fields directly
-    for key, value in nominee_data.items():
-        if not isinstance(value, (dict, list)) or key == 'nominees':
-            record[key] = value
-    
-    # Add citation as a correlatable field
-    if 'congress' in nominee_data and 'number' in nominee_data:
-        congress = nominee_data.get('congress')
-        number = nominee_data.get('number')
-        ordinal = nominee_data.get('ordinal', '1')
-        record['citation'] = f"PN{number}"
-        record['nominee_id'] = f"{congress}-{number}-{ordinal}"
-    
-    # Add source metadata
-    record['data_source'] = 'congress.gov_api_nominee'
-    record['retrieval_date'] = datetime.now().isoformat()
-    
-    return record
-
-
-def extract_nomination_data(nomination_data: Dict[str, Any], full_details: bool = False) -> List[Dict[str, Any]]:
-    """
-    Extract Congress.gov API nomination data, preserving original values and structure.
-    Only normalizes column names for consistency with other data sources.
-    
-    Args:
-        nomination_data: Nomination data from Congress.gov API
-        full_details: Whether this is a full nomination detail object (to properly trace logs)
-        
-    Returns:
-        List of nomination records with minimal transformations
-    """
-    logger.debug(f"Extracting nomination data (full_details={full_details})")
-    logger.trace(f"Input data: {nomination_data}")
-    
     records = []
     
-    # Add metadata fields that aren't in the API response
+    # Create metadata for each record to track its source
     metadata = {
-        "data_source": "congress.gov_api",  # Track the data source
-        "retrieval_date": datetime.now().isoformat(),  # When this data was retrieved
-        "is_detail_record": full_details,  # Whether this came from detail or summary
+        "retrieval_date": datetime.now().strftime('%Y-%m-%d'),
+        "is_full_detail": full_details,
     }
+
+    # First handle the nomination-level data
+    nomination_desc = nomination_data.get("description", "")
+    citation = nomination_data.get("citation", "")
+
+    # Parse circuit and court if present in description
+    circuit_num, court_code = parse_court_from_description(nomination_desc)
     
-    # Process nominees - handle both list and dict formats
+    # Add parsed values to metadata
+    if circuit_num:
+        metadata["parsed_circuit"] = circuit_num
+    if court_code:
+        metadata["parsed_court"] = court_code
+    
+    # Get the nominees data
     nominees_data = []
     
-    # Get nominees, handling both dictionary and list formats
-    nominees = nomination_data.get("nominees", {})
-    if isinstance(nominees, dict) and "items" in nominees:
-        # Structure: {"nominees": {"items": [...]}}
-        nominees_data = nominees["items"]
-    elif isinstance(nominees, list):
-        # Structure: {"nominees": [...]}
-        nominees_data = nominees
+    # Handle the nominees collection
+    if full_details:
+        # For detailed records, nominees are in a structured format
+        nominees_data = nomination_data.get("nominees", [])
+    else:
+        # For summary records, we don't have structured nominee data
+        nominees_data = []
     
-    # If no nominees data available, create a single record with just nomination data
+    # If there are no nominees, create a single record with nomination data
     if not nominees_data:
-        # Create a base record with all top-level nomination data
         record = {}
         
         # Copy all top-level fields from the nomination data
@@ -245,46 +221,6 @@ class CongressAPIClient:
         
         if not self.api_key:
             raise ValueError("Congress.gov API key is required")
-            
-    def create_retry_decorator(self) -> Callable:
-        """
-        DEPRECATED: This method is no longer used. Retry decorators are now applied
-        directly to methods for clarity and maintainability.
-        
-        All API methods now use the same retry configuration:
-        - Retries on network errors (requests.exceptions.RequestException, ConnectionError)
-        - Uses exponential backoff starting at 2s, doubling each retry up to 60s max wait
-        - Gives up after 5 attempts
-        - Logs warnings before each retry
-        
-        The retry configuration provides resilience against:
-        - Transient network issues
-        - Rate limiting (HTTP 429 responses)
-        - Brief API outages
-        
-        NOTE: This retry mechanism handles retrying individual API calls. It does not
-        implement partial-results handling or resume-on-restart for bulk operations,
-        which would require additional state management.
-        """
-        # This method is kept for backward compatibility but is no longer used
-        return retry(
-            # Retry conditions - retry on requests exceptions and HTTP 429 (rate limit)
-            retry=retry_if_exception_type((
-                requests.exceptions.RequestException, 
-                requests.exceptions.HTTPError,
-                requests.exceptions.ConnectionError,
-                requests.exceptions.Timeout
-            )),
-            # Stop after max_retries attempts
-            stop=stop_after_attempt(self.max_retries),
-            # Wait exponentially between retries, starting at min_wait_seconds and 
-            # increasing up to max_wait_seconds with randomized jitter
-            wait=wait_exponential(multiplier=1, min=self.min_wait_seconds, max=self.max_wait_seconds),
-            # Log before each retry with detailed information
-            before_sleep=before_sleep_log(logger, level='WARNING'),
-            # Retry even if we get a response with status code 429
-            reraise=True
-        )
             
     def _track_request(self, count_request: bool = True) -> None:
         """Track a new API request and clean up old request timestamps.
@@ -353,17 +289,71 @@ class CongressAPIClient:
                 f"✓ Rate limit status: {status['requests_made']}/{self.max_hourly_requests} "
                 f"requests ({status['percent_used']:.1f}%) in the last hour"
             )
-            
+    
+    # Properly place the decorator directly above the method
     @retry(
         retry=retry_if_exception_type((requests.exceptions.RequestException, ConnectionError)),
-        wait=wait_exponential(multiplier=1, min=2, max=60),  # Start at 2s, double each retry, max 60s
-        stop=stop_after_attempt(5),  # Give up after 5 attempts
-        before_sleep=before_sleep_log(logger, level="WARNING"),
-    )
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        stop=stop_after_attempt(5),
+        before_sleep=before_sleep_log(_tenacity_logger, logging.WARNING),
+    )            
+    def _make_request(self, url: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Make a request to the Congress.gov API with automatic retries.
+        
+        Args:
+            url: Full API URL
+            params: Query parameters to include
+            
+        Returns:
+            API response data
+            
+        Raises:
+            requests.exceptions.RequestException: If the request fails after all retries
+        """
+        # Add API key to parameters
+        params = params or {}
+        params["api_key"] = self.api_key
+        
+        # Track this request for rate limit monitoring
+        self._track_request()
+        
+        # Check if we might be approaching/exceeding rate limit
+        status = self.get_rate_limit_status()
+        if status["is_exceeded"]:
+            logger.error(f"Rate limit exceeded ({status['percent_used']:.1f}%). Request may fail.")
+        elif status["is_warning"]:
+            logger.warning(f"Approaching rate limit ({status['percent_used']:.1f}%).")
+        
+        # Make the request
+        response = requests.get(url, params=params)
+        
+        # Handle HTTP errors
+        if response.status_code == 429:
+            logger.warning(f"Rate limit hit (HTTP 429). Will retry after backoff.")
+            response.raise_for_status()  # This will be caught by the retry decorator
+            
+        if response.status_code != 200:
+            logger.error(f"API request failed with status {response.status_code}: {response.text}")
+            response.raise_for_status()
+            
+        # Parse and return JSON data
+        try:
+            return response.json()
+        except ValueError:
+            logger.error(f"Invalid JSON response: {response.text[:100]}...")
+            raise ValueError(f"Invalid JSON response from API: {response.text[:100]}...")
     
+    # Properly place the decorator directly above the method
+    @retry(
+        retry=retry_if_exception_type((requests.exceptions.RequestException, ConnectionError)),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        stop=stop_after_attempt(5),
+        before_sleep=before_sleep_log(_tenacity_logger, logging.WARNING),
+    )
     def get_nominations(
-        self, congress: int, params: Dict[str, Any] = None, auto_paginate:bool=True
-    ) -> List[Dict[str, Any]]:
+        self, congress: int, params: Optional[Dict[str, Any]] = None, auto_paginate: bool = True
+    ) -> Dict[str, Any]:
         """
         Fetch nominations for a specific congress with pagination support.
         
@@ -382,155 +372,98 @@ class CongressAPIClient:
         Raises:
             RuntimeError: If the API rate limit is exceeded
         """
-        # Print initial rate limit status
+        # Check rate limit status before starting
         self.print_rate_limit_summary()
         
         # First get all civilian nominations (exclude military)
-        all_nominations = self.get_nominations(congress, {"isCivilian": "true"}, auto_paginate=auto_paginate)    
+        params = {} if params is None else params.copy()
+        params["isCivilian"] = "true"
         
-        if not all_nominations or "nominations" not in all_nominations:
-            logger.warning(f"No nominations found for Congress {congress}")
-            return []
+        endpoint = f"/nomination/{congress}"
+        url = f"{self.BASE_URL}{endpoint}"
         
-        # Get the actual nomination items from the response
-        nominations = all_nominations.get("nominations", [])
-        logger.info(f"Found {len(nominations)} civilian nominations in Congress {congress}")
+        # Get first page
+        response = self._make_request(url, params)
+        all_nominations = response
         
-        # Filter for likely judicial nominations using summary data
-        judicial_nominations = [n for n in nominations if is_likely_judicial_summary(n)]
-        logger.info(f"Found {len(judicial_nominations)} judicial nominations based on summary data")
-        
-        # Log some examples of what we found
-        for i, nom in enumerate(judicial_nominations[:10]):
-            logger.info(f"Judicial nomination {i+1}: {nom.get('number')} - {nom.get('description', 'No description')}")
-        
-        # Print rate limit status before detailed fetching
-        self.print_rate_limit_summary()
-        
-        # For each judicial nomination, get the detailed information
-        detailed_records = []
-        
-        for i, nomination in enumerate(judicial_nominations):
-            congress_number = nomination.get("congress")
-            nomination_number = nomination.get("number")
+        # Follow pagination if auto_paginate is True
+        if auto_paginate and "pagination" in response and "next" in response["pagination"]:
+            logger.info(f"Auto-paginating nomination results for Congress {congress}")
             
-            if not congress_number or not nomination_number:
-                logger.warning(f"Missing congress or nomination number for entry {i}")
-                continue
-                
-            logger.info(f"Processing judicial nomination {i+1}/{len(judicial_nominations)}: {nomination_number}")
+            # Track nominations across pages
+            nominations = response.get("nominations", [])
             
-            # First extract records from summary data as fallback
-            summary_records = extract_nomination_data(nomination, full_details=False)
-            
-            # Fetch detailed information
-            try:
-                # Get detailed nomination data - already contains nominee information
-                detail = self.get_nomination_detail(congress_number, nomination_number)
-                
-                if not detail:
-                    logger.warning(f"No detail found for nomination {nomination_number}, using summary data")
-                    detailed_records.extend(summary_records)
-                    continue
-                    
-                # Extract the detail data with minimal processing
-                records = extract_nomination_data(detail, full_details=True)
-                
-                if records:
-                    detailed_records.extend(records)
-                    logger.info(f"Added {len(records)} detail-level records for nomination {nomination_number}")
+            # Keep fetching until we run out of pages
+            next_link = response["pagination"]["next"]
+            while next_link:
+                # Extract link and make request
+                # Check if next_link is absolute or relative URL
+                if next_link.startswith('http'):
+                    next_url = next_link  # Use as is if it's an absolute URL
                 else:
-                    # If no detailed records, use the summary records
-                    logger.warning(f"No detail records created for {nomination_number}, falling back to summary")
-                    detailed_records.extend(summary_records)
-                    logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number}")
-            except requests.exceptions.RequestException as e:
-                # This exception would have been retried by the decorator on get_nomination_detail
-                # If we're here, we've exhausted all retries
-                logger.error(f"Error processing nomination {nomination_number} after all retries: {str(e)}")
-                # Fall back to summary records after retry attempts
-                detailed_records.extend(summary_records)
-                logger.info(f"Added {len(summary_records)} summary-level records for nomination {nomination_number} (after retry failure)")
-                # Print traceback for easier debugging
-                traceback.print_exc()
-        
-        # Print final rate limit status after processing all nominations
-        self.print_rate_limit_summary()
+                    next_url = f"{self.BASE_URL}{next_link}"  # Prepend base URL for relative paths
                 
-        logger.info(f"Found {len(detailed_records)} detailed judicial nomination records")
+                logger.debug(f"Fetching next page: {next_url}")
+                response = self._make_request(next_url)
+                
+                # Add to our results
+                if "nominations" in response:
+                    nominations.extend(response["nominations"])
+                    
+                # Check for more pages
+                next_link = response.get("pagination", {}).get("next")
+            
+            # Update the aggregated response with all nominations
+            all_nominations["nominations"] = nominations
         
-        # No longer normalizing column names here - this will be done in the data cleaning notebook
-        logger.info(f"Processed {len(detailed_records)} total judicial nomination records for Congress {congress}")
-        return detailed_records
+        return all_nominations
 
     @retry(
         retry=retry_if_exception_type((requests.exceptions.RequestException, ConnectionError)),
-        wait=wait_exponential(multiplier=1, min=2, max=60),  # Start at 2s, double each retry, max 60s
-        stop=stop_after_attempt(5),  # Give up after 5 attempts
-        before_sleep=before_sleep_log(logger, level="WARNING"),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        stop=stop_after_attempt(5),
+        before_sleep=before_sleep_log(_tenacity_logger, logging.WARNING),
     )
-    def get_nomination_detail(self, congress: int, nomination_number: int, part_number: Optional[str] = None) -> Dict[str, Any]:
+    def get_nomination_detail(self, congress: int, nomination_number: str) -> Dict[str, Any]:
         """
-        Fetch detailed information about a specific nomination.
+        Get detailed information about a specific nomination.
         
         Args:
             congress: Congress number (e.g., 118)
-            nomination_number: Nomination number (e.g., 1)
-            part_number: Optional part number for multi-part nominations
+            nomination_number: Nomination number (e.g., "PN123")
             
         Returns:
-            Nomination detail data from the API
+            Detailed nomination data
+            
+        Raises:
+            requests.exceptions.RequestException: If the request fails after all retries
         """
-        # Construct URL based on parameters
-        url = f"{self.BASE_URL}/nomination/{congress}/{nomination_number}"
-        
-        # Add part number if provided
-        if part_number:
-            url = f"{url}/{part_number}"
-        
-        params = {
-            "api_key": self.api_key,
-            "format": "json",
-        }
-        
-        logger.info(f"Fetching nomination detail from {url}")
-        self._track_request()
+        endpoint = f"/nomination/{congress}/{nomination_number}"
+        url = f"{self.BASE_URL}{endpoint}"
         
         try:
-            response = requests.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
+            return self._make_request(url)
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching nomination detail: {str(e)}")
-            raise  # Will be retried by the decorator
-
-    def get_judicial_nominations(self, congress: int, auto_paginate:bool=True) -> List[Dict[str, Any]]:
+            logger.error(f"Error fetching nomination detail for {nomination_number}: {str(e)}")
+            raise
+    
+    def get_judicial_nominations(self, congress: int, auto_paginate: bool = True) -> List[Dict[str, Any]]:
         """
-        Fetch and filter for judicial nominations from a single congress.
+        Get all judicial nominations for a specific Congress term.
         
-        Uses only summary-level filtering to identify judicial nominations,
-        then retrieves detailed data for each one that passes the filter.
-        Returns raw API data with minimal processing (column normalization only).
-
         Args:
             congress: Congress number (e.g., 118)
-            auto_paginate: Whether to automatically fetch all pages (default: True)
-
+            auto_paginate: Whether to automatically paginate API results
+            
         Returns:
-            List of judicial nomination records with minimal processing
+            List of processed nomination records
             
         Raises:
             RuntimeError: If the API rate limit is exceeded
         """
-        logger.info(f"Fetching judicial nominations for Congress {congress}")
-        
-        # Print initial rate limit status
-        self.print_rate_limit_summary()
-        
         try:
-            # First get all civilian nominations (exclude military)
-            # Note: get_nominations already has its own retry logic
-            all_nominations = self.get_nominations(congress, {"isCivilian": "true"}, auto_paginate=auto_paginate)    
+            # First get all civilian nominations
+            all_nominations = self.get_nominations(congress, auto_paginate=auto_paginate)
             
             if not all_nominations or "nominations" not in all_nominations:
                 logger.warning(f"No nominations found for Congress {congress}")

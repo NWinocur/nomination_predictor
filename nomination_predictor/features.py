@@ -14,7 +14,7 @@ from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
 import re
-from typing import Dict, Iterator, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 from loguru import logger
 import pandas as pd
@@ -928,7 +928,7 @@ def extract_years_from_career(career_text: str) -> Tuple[Optional[int], Optional
     return None, None
 
 
-def snapshot_career(career_df: pd.DataFrame, nid: str, cutoff_date: date) -> Dict[str, any]:
+def snapshot_career(career_df: pd.DataFrame, nid: str, cutoff_date: date) -> Dict[str, Any]:
     """
     Compute career snapshot features for a judge prior to cutoff date.
     
