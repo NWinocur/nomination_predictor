@@ -136,7 +136,7 @@ def extract_nomination_data(
     
     # Create metadata for each record to track its source
     metadata = {
-        "retrieval_date": datetime.now().strftime('%Y-%m-%d'),
+        "retrieval_date": datetime.now().isoformat(),
         "is_full_detail": full_details,
     }
 
@@ -629,7 +629,7 @@ class CongressAPIClient:
                 # Add request metadata
                 request_info = {
                     'request': {'url': url},
-                    'retrieval_date': datetime.now().strftime('%Y-%m-%d'),
+                    'retrieval_date': datetime.now().isoformat(),
                 }
                 
                 # Store as a dict with the nominee data and request info

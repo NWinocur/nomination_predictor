@@ -23,6 +23,36 @@ import typer
 from nomination_predictor.config import RAW_DATA_DIR
 from nomination_predictor.congress_api import CongressAPIClient
 
+
+def get_retrieval_date_range_message(df: pd.DataFrame, data_type: str) -> str:
+    """
+    Generate a message showing the date range when data was retrieved.
+    
+    Args:
+        df: DataFrame containing the data with a retrieval_date column
+        data_type: String describing the type of data (e.g., 'nominations', 'nominees')
+        
+    Returns:
+        Formatted message with record count and retrieval date range information
+    """
+    if 'retrieval_date' in df.columns and not df['retrieval_date'].isna().all():
+        # Ensure retrieval_date is parsed as datetime
+        if not pd.api.types.is_datetime64_any_dtype(df['retrieval_date']):
+            try:
+                df['retrieval_date'] = pd.to_datetime(df['retrieval_date'])
+            except Exception as e:
+                return f"Loaded {len(df)} {data_type} records from cache (but was unable to determine when cache was retrieved due to error: {e})"
+        
+        # Get min and max dates
+        earliest_date = df['retrieval_date'].min()
+        latest_date = df['retrieval_date'].max()
+        
+        # Format the message
+        return f"Loaded {len(df)} {data_type} records from cache (retrieved from {earliest_date:%Y-%m-%d %H:%M} to {latest_date:%Y-%m-%d %H:%M})"
+    else:
+        return f"Loaded {len(df)} {data_type} records from cache (retrieval date information not found)"
+
+
 app = typer.Typer()
 
 
@@ -375,7 +405,10 @@ def fetch_judicial_nominations(
     if os.path.exists(cache_file):
         logger.info(f"Found cached nominations data at {cache_file}")
         nominations_df = pd.read_csv(cache_file, parse_dates=['retrieval_date'])
-        logger.info(f"Loaded {len(nominations_df)} nominations from cache; see dataframe's retrieval_date column to check when this data was fetched")
+        
+        # Calculate and display date range of the cached data
+        date_range_msg = get_retrieval_date_range_message(nominations_df, "nominations")
+        logger.info(date_range_msg)
         
         # Check if the DataFrame is empty or has suspiciously few rows
         if len(nominations_df) == 0:
