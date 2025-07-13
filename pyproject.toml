@@ -29,6 +29,8 @@ dependencies = [
     "pytest",
     "pytest-cov",
     "python-dotenv",
+    "python-Levenshtein",
+    "thefuzz",
     "rapidfuzz",
     "ruff",
     "scikit-learn",
