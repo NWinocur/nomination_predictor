@@ -4,8 +4,9 @@ from datetime import datetime, timedelta
 import logging
 import os
 import re
+import time
 import traceback
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 import requests
@@ -16,6 +17,7 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+from tqdm.auto import tqdm
 
 # Configure standard logger for tenacity (which doesn't work with loguru)
 _tenacity_logger = logging.getLogger("tenacity")
@@ -447,6 +449,138 @@ class CongressAPIClient:
             logger.error(f"Error fetching nomination detail for {nomination_number}: {str(e)}")
             raise
     
+    @retry(
+        retry=retry_if_exception_type((requests.exceptions.RequestException, ConnectionError)),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        stop=stop_after_attempt(5),
+        before_sleep=before_sleep_log(_tenacity_logger, logging.WARNING),
+    )
+    def get_nominee_data(self, nominee_url: str) -> Dict[str, Any]:
+        """
+        Get detailed information about a specific nominee.
+        
+        Args:
+            nominee_url: Full URL to the nominee API endpoint
+            
+        Returns:
+            Nominee data as received from the API
+            
+        Raises:
+            requests.exceptions.RequestException: If the request fails after all retries
+        """
+        try:
+            # Check if it's a full URL or just a path
+            if nominee_url.startswith('http'):
+                url = nominee_url
+            else:
+                url = f"{self.BASE_URL}{nominee_url}"
+                
+            # Track rate limit
+            self._track_request()
+            
+            return self._make_request(url)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching nominee data from {nominee_url}: {str(e)}")
+            raise
+    
+    def get_all_nominees_data(self, nominee_urls: List[str], show_progress: bool = True) -> List[Dict[str, Any]]:
+        """
+        Fetch data for multiple nominees in bulk.
+        
+        Args:
+            nominee_urls: List of nominee API URLs
+            show_progress: Whether to show progress with tqdm (works in notebooks and terminals)
+            
+        Returns:
+            List of nominee data dictionaries with request metadata
+        """
+        all_nominees = []
+        total = len(nominee_urls)
+        
+        if total == 0:
+            logger.warning("No nominee URLs provided")
+            return all_nominees
+            
+        logger.info(f"Preparing to fetch data for {total} nominees")
+        
+        # Create progress bar - tqdm.auto automatically selects the appropriate class
+        # for the current environment (notebook or terminal)
+        progress_iterator = tqdm(nominee_urls, total=total, desc="Fetching nominees") if show_progress else nominee_urls
+        
+        for url in progress_iterator:
+            try:
+                # Check if we're approaching rate limit
+                rate_status = self.get_rate_limit_status()
+                
+                if rate_status['is_exceeded']:
+                    # Calculate backoff time - starts with 60 seconds and can increase
+                    # Hour has 3600 seconds, so we want to wait for approximately
+                    # enough time for the oldest requests to drop out of the window
+                    backoff_seconds = min(60 * (2 ** (rate_status['percent_used'] / 100 - 1)), 900)  # Cap at 15 minutes
+                    
+                    logger.warning(f"API rate limit exceeded. Backing off for {backoff_seconds:.1f} seconds")
+                    
+                    if show_progress:
+                        original_desc = progress_iterator.desc
+                        for remaining in range(int(backoff_seconds), 0, -1):
+                            progress_iterator.set_description(
+                                f"Rate limit hit - waiting {remaining}s"
+                            )
+                            time.sleep(1)
+                        progress_iterator.set_description(original_desc)
+                    else:
+                        time.sleep(backoff_seconds)
+                        
+                    logger.info("Resuming nominee data collection after backoff")
+                    
+                elif rate_status['is_warning']:
+                    warning_msg = f"API rate limit warning: {rate_status['percent_used']:.1f}% used"
+                    logger.warning(warning_msg)
+                    if show_progress:
+                        # Update progress bar description to show warning
+                        progress_iterator.set_description(f"Fetching nominees (Rate limit: {rate_status['percent_used']:.1f}%)")
+                        
+                    # Introduce a small delay when approaching limits
+                    if rate_status['percent_used'] > 90:
+                        delay = 2.0  # 2 seconds when very close to limit
+                    else:
+                        delay = 0.5  # 0.5 seconds when just at warning threshold
+                        
+                    time.sleep(delay)
+                
+                # Get nominee data
+                nominee_data = self.get_nominee_data(url)
+                
+                # Add request metadata
+                request_info = {
+                    'request': {'url': url},
+                    'retrieval_date': datetime.now().strftime('%Y-%m-%d'),
+                }
+                
+                # Store as a dict with the nominee data and request info
+                nominee_entry = {
+                    'nominee': nominee_data,
+                    'request': request_info['request'],
+                    'retrieval_date': request_info['retrieval_date'],
+                }
+                
+                all_nominees.append(nominee_entry)
+                    
+            except Exception as e:
+                error_msg = f"Error processing nominee URL {url}: {str(e)}"
+                logger.error(error_msg)
+                if show_progress:
+                    # Update progress bar postfix to show last error
+                    progress_iterator.set_postfix_str(f"Last error: {str(e)[:30]}..." if len(str(e)) > 30 else f"Last error: {str(e)}")
+                # Continue with next nominee instead of failing the entire batch
+        
+        # Print final rate limit status after processing all nominees
+        self.print_rate_limit_summary()
+        
+        logger.info(f"Successfully retrieved data for {len(all_nominees)}/{total} nominees")
+            
+        return all_nominees
+        
     def get_judicial_nominations(self, congress: int, auto_paginate: bool = True) -> List[Dict[str, Any]]:
         """
         Get all judicial nominations for a specific Congress term.
@@ -490,7 +624,11 @@ class CongressAPIClient:
         # For each judicial nomination, get the detailed information
         detailed_records = []
         
-        for i, nomination in enumerate(judicial_nominations):
+        # Create tqdm progress bar if we have more than a few nominations
+        use_progress_bar = len(judicial_nominations) > 10
+        nominations_iter = tqdm(judicial_nominations, desc="Fetching nomination details") if use_progress_bar else judicial_nominations
+        
+        for i, nomination in enumerate(nominations_iter):
             congress_number = nomination.get("congress")
             nomination_number = nomination.get("number")
             
@@ -498,7 +636,47 @@ class CongressAPIClient:
                 logger.warning(f"Missing congress or nomination number for entry {i}")
                 continue
                 
-            logger.info(f"Processing judicial nomination {i+1}/{len(judicial_nominations)}: {nomination_number}")
+            if use_progress_bar:
+                nominations_iter.set_description(f"Processing: {nomination_number}")
+            else:
+                logger.info(f"Processing judicial nomination {i+1}/{len(judicial_nominations)}: {nomination_number}")
+            
+            # Check rate limits and apply graduated delays if needed
+            rate_status = self.get_rate_limit_status()
+            
+            if rate_status['is_exceeded']:
+                # Calculate backoff time - starts with 60 seconds and can increase
+                # Cap at 15 minutes to avoid excessive waits
+                backoff_seconds = min(60 * (2 ** (rate_status['percent_used'] / 100 - 1)), 900)
+                
+                logger.warning(f"API rate limit exceeded. Backing off for {backoff_seconds:.1f} seconds")
+                
+                if use_progress_bar:
+                    original_desc = nominations_iter.desc
+                    for remaining in range(int(backoff_seconds), 0, -1):
+                        nominations_iter.set_description(f"Rate limit hit - waiting {remaining}s")
+                        time.sleep(1)
+                    nominations_iter.set_description(original_desc)
+                else:
+                    time.sleep(backoff_seconds)
+                    
+                logger.info("Resuming nomination data collection after backoff")
+                
+            elif rate_status['is_warning']:
+                warning_msg = f"API rate limit warning: {rate_status['percent_used']:.1f}% used"
+                logger.warning(warning_msg)
+                
+                if use_progress_bar:
+                    # Update progress bar description to show warning
+                    nominations_iter.set_description(f"Processing: {nomination_number} (Rate: {rate_status['percent_used']:.1f}%)")
+                
+                # Introduce a small delay when approaching limits
+                if rate_status['percent_used'] > 90:
+                    delay = 2.0  # 2 seconds when very close to limit
+                else:
+                    delay = 0.5  # 0.5 seconds when just at warning threshold
+                    
+                time.sleep(delay)
             
             # First extract records from summary data as fallback
             summary_records = extract_nomination_data(nomination, full_details=False)

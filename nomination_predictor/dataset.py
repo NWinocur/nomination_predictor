@@ -441,6 +441,7 @@ def extract_nominee_urls_from_nominations_df(nominations_df: pd.DataFrame) -> pd
     Returns:
         DataFrame with columns: citation, nominee_url, congress, number
     """
+    import ast
     import json
 
     from loguru import logger
@@ -451,15 +452,35 @@ def extract_nominee_urls_from_nominations_df(nominations_df: pd.DataFrame) -> pd
     if 'nomination' not in nominations_df.columns:
         logger.error("No 'nomination' column found in nominations DataFrame")
         return pd.DataFrame()
-        
+    
+    # Debug information
+    logger.info(f"Processing {len(nominations_df)} nominations to extract nominee URLs")
+    
     # Loop through each nomination
-    for _, row in nominations_df.iterrows():
+    for idx, row in nominations_df.iterrows():
         try:
-            # Parse the nomination JSON if it's a string, or use as-is if already parsed
-            if isinstance(row['nomination'], str):
-                nomination_data = json.loads(row['nomination'])
+            # Get the nomination data
+            nomination_value = row['nomination']
+            
+            # Handle different types of stored JSON data
+            if isinstance(nomination_value, dict):
+                # Already a dictionary, use directly
+                nomination_data = nomination_value
+            elif isinstance(nomination_value, str):
+                try:
+                    # Try standard JSON parsing first
+                    nomination_data = json.loads(nomination_value)
+                except json.JSONDecodeError:
+                    # If that fails, try ast.literal_eval which can handle single quotes and other issues
+                    try:
+                        nomination_data = ast.literal_eval(nomination_value)
+                    except (ValueError, SyntaxError):
+                        # If both fail, log and continue to next row
+                        logger.error(f"Failed to parse nomination JSON at index {idx}")
+                        continue
             else:
-                nomination_data = row['nomination']
+                logger.error(f"Unexpected nomination data type: {type(nomination_value)} at index {idx}")
+                continue
                 
             # Extract nominees array
             nominees = nomination_data.get('nominees', [])
@@ -474,7 +495,7 @@ def extract_nominee_urls_from_nominations_df(nominations_df: pd.DataFrame) -> pd
                         'number': nomination_data.get('number')
                     })
         except Exception as e:
-            logger.error(f"Error extracting nominee URL: {e}")
+            logger.error(f"Error extracting nominee URL at index {idx}: {e}")
             
     return pd.DataFrame(nominee_urls)
 
