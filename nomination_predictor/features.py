@@ -15,9 +15,9 @@ import json
 import re
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
-import pandas as pd
 from loguru import logger
 from nameparser import HumanName
+import pandas as pd
 from tqdm import tqdm
 
 
@@ -362,39 +362,6 @@ def _flatten_json_recursive(
 
 
 
-def extract_last_name(full_name: str) -> str:
-    """
-    Extract last name from a full name, handling suffixes and special cases.
-    
-    Args:
-        full_name: Full name string
-        
-    Returns:
-        Last name or empty string if extraction fails
-    """
-    if not full_name or pd.isna(full_name):
-        return ""
-    
-    # Remove suffixes like Jr., Sr., III, etc.
-    name = str(full_name).strip()
-    suffixes = [' jr', ' sr', ' ii', ' iii', ' iv', ' v', ' esq']
-    
-    for suffix in suffixes:
-        if suffix in name.lower():
-            # Find the suffix position and cut off the name there
-            pos = name.lower().find(suffix)
-            name = name[:pos]
-    
-    # Handle "Last, First Middle" format
-    if ',' in name:
-        return name.split(',')[0].strip()
-    
-    # For "First Middle Last" format, take the last word
-    return name.split()[-1].strip()
-
-
-
-
 def clean_name(name: str) -> str:
     """
     Clean and normalize a name string.
@@ -411,27 +378,6 @@ def clean_name(name: str) -> str:
     name = re.sub(r"[\.,]", "", name)  # drop punctuation
     name = re.sub(r"\s+", " ", name).strip()
     return name
-
-
-def split_name(name: str) -> Tuple[str, str, str]:
-    """
-    Very naive splitter: returns first, middle (maybe empty), last
-
-    Args:
-        name: Full name to split
-
-    Returns:
-        Tuple of (first_name, middle_name, last_name)
-    """
-    parts = clean_name(name).split()
-    if not parts:
-        return "", "", ""
-    if len(parts) == 1:
-        return parts[0], "", ""
-    if len(parts) == 2:
-        return parts[0], "", parts[1]
-    return parts[0], " ".join(parts[1:-1]), parts[-1]
-
 
 def create_full_name_from_parts(
     first_name: Optional[str] = None,
