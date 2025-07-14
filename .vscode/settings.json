@@ -23,6 +23,7 @@
       "Juris",
       "latestaction",
       "middlename",
+      "nameparser",
       "nids",
       "pathlib",
       "rapidfuzz",

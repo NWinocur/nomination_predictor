@@ -21,6 +21,7 @@ dependencies = [
     "loguru",
     "matplotlib",
     "mkdocs",
+    "nameparser",
     "notebook",
     "numpy",
     "pandas",
@@ -67,3 +68,4 @@ force-sort-within-sections = true
 
 [tool.flit.module]
 name = "nomination_predictor"
+

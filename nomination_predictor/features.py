@@ -10,10 +10,14 @@ Given a vacancy is on record as having existed in a specified court, with a name
 Given a nomination is on record as having occurred on a specified date, when filling in date-dependent feature data (e.g. which President performed the nomination), then the interim data shall be updated to include date-inferred data (e.g. a numeric ordinal indicator identifying that President who was in office on the date of nomination.
 """
 
-from typing import Dict
+import ast
+import json
+import re
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
-from loguru import logger
 import pandas as pd
+from loguru import logger
+from nameparser import HumanName
 from tqdm import tqdm
 
 
@@ -144,8 +148,7 @@ def merge_nominees_with_nominations(
 
 
 def filter_non_judicial_nominations(
-    frame_with_position_titles: pd.DataFrame, non_judicial_titles: list[str] = None
-) -> pd.DataFrame:
+    frame_with_position_titles: pd.DataFrame, non_judicial_titles: list[str]) -> pd.DataFrame:
     """
     Filter out non-judicial nominations based on position titles.
 
@@ -156,7 +159,7 @@ def filter_non_judicial_nominations(
     Returns:
         Tuple of (filtered_nominations_df, filtered_nominees_df)
     """
-    if non_judicial_titles is None:
+    if non_judicial_titles is None or non_judicial_titles == []:
         non_judicial_titles = [
             "Attorney",
             "Board",
@@ -286,7 +289,7 @@ def flatten_json_dataframe(
                 json_data = _safe_parse_json(json_data)
 
             # Flatten this specific JSON structure
-            flat_dict = {}
+            flat_dict: dict[str, Any] = {}
             _flatten_json_recursive(
                 json_data, flat_dict, prefix="", max_list_index=max_list_index, separator=separator
             )
@@ -597,70 +600,41 @@ def merge_nominees_onto_nominations(
         return nominations_df
 
 
-def convert_judge_name_format_from_last_to_first_to_first_then_last(judge_name):
+def convert_judge_name_format_from_last_comma_first_to_first_then_last(judge_name):
     """
     Convert judge name from "lastname, firstname middlename (suffix)" format
-    to "firstname lastname middlename suffix" format.
+    to "firstname middlename lastname suffix" format using the nameparser library.
+    
+    This handles various edge cases including multiple commas, suffixes, titles, etc.
 
     Args:
         judge_name: String in format "lastname, firstname middlename (suffix)"
 
     Returns:
-        String in format "firstname lastname middlename suffix"
+        String in format "firstname middlename lastname suffix"
     """
     if not isinstance(judge_name, str) or not judge_name.strip():
         return ""
-
-    name = judge_name.strip()
-
-    # Handle names with multiple commas like "Lastname, Firstname Middle, Jr."
-    all_parts = name.split(",")
-
-    # First part is always the last name
-    last_name = all_parts[0].strip()
-
-    # Check if there are multiple parts
-    if len(all_parts) >= 2:
-        # Last part might be a suffix (Jr., Sr., etc.)
-        potential_suffix = all_parts[-1].strip().lower()
-
-        # Check if the last part is a known suffix
-        suffix_patterns = ["jr", "sr", "ii", "iii", "iv", "v"]
-        is_suffix = any(
-            potential_suffix == pattern or potential_suffix.startswith(pattern + ".")
-            for pattern in suffix_patterns
-        )
-
-        if len(all_parts) > 2 and is_suffix:
-            # If we have lastname, firstname middle, suffix format
-            suffix = all_parts[-1].strip()
-            first_and_middle = all_parts[
-                1
-            ].strip()  # Second part has firstname and possibly middle
-        else:
-            # If no suffix or just lastname, firstname middle format
-            suffix = ""
-            first_and_middle = ", ".join(all_parts[1:]).strip()  # Join everything after lastname
-
-            # Check for embedded suffix in the first_and_middle part
-            suffix_match = re.search(r"\b(Jr\.?|Sr\.?|I{1,3}V?|IV)\b", first_and_middle)
-            if suffix_match:
-                suffix = suffix_match.group(0)
-                first_and_middle = re.sub(
-                    r"\b(Jr\.?|Sr\.?|I{1,3}V?|IV)\b", "", first_and_middle
-                ).strip()
-
-        # Split first and middle names
-        name_parts = first_and_middle.split()
-        first_name = name_parts[0] if name_parts else ""
-        middle_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
-
-        # Reconstruct in desired format: first middle last suffix
-        full_name = " ".join(filter(None, [first_name, middle_name, last_name, suffix]))
-        return full_name
-    else:
-        # If the name doesn't contain a comma, return it as is
-        return name
+    
+    # Parse the name using nameparser's HumanName
+    parsed_name = HumanName(judge_name)
+    
+    # Combine the components in the desired order
+    components = [
+        parsed_name.first,
+        parsed_name.middle,
+        parsed_name.last,
+        parsed_name.suffix
+    ]
+    
+    # Join the non-empty components with spaces
+    result = " ".join(filter(None, components))
+    
+    # If parsing failed completely, return original string
+    if not result.strip() and judge_name.strip():
+        return judge_name.strip()
+    
+    return result
 
 
 def extract_name_and_location_from_description(description: str) -> tuple[str, str]:

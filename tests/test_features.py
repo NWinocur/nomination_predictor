@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 
 from nomination_predictor.features import (
+    convert_judge_name_format_from_last_comma_first_to_first_then_last,
     extract_name_and_location_columns,
     extract_name_and_location_from_description,
 )
@@ -72,3 +73,36 @@ def test_extract_name_and_location_columns():
     df_copy = df.copy()
     result_df_invalid = extract_name_and_location_columns(df_copy, description_column="nonexistent_column")
     assert result_df_invalid.equals(df_copy)  # Should return original DataFrame unchanged
+
+
+@pytest.mark.parametrize(
+    "judge_name,expected_output",
+    [
+        # Basic lastname, firstname format
+        ("Smith, John", "John Smith"),
+        
+        # With middle name
+        ("Jones, Robert Michael", "Robert Michael Jones"),
+        
+        # With suffix as separate part (Jr, Sr, III, etc.)
+        ("Johnson, Thomas, Jr.", "Thomas Johnson Jr."),
+        ("Williams, James, Sr.", "James Williams Sr."),
+        ("Brown, William, III", "William Brown III"),
+        
+        # Specific test case for the reported issue
+        ("Lake, Simeon Timothy III", "Simeon Timothy Lake III"),
+        ("lake, simeon timothy iii", "simeon timothy lake iii"),  # lowercase version
+        
+        # With multiple commas but suffix embedded in middle part
+        ("Garcia, Maria Jr., PhD", "Maria Garcia Jr., PhD"),
+        
+        # Edge cases
+        ("", ""),  # Empty string
+        (None, ""),  # None input
+        ("Single Name", "Single Name"),  # No comma
+    ],
+)
+def test_convert_judge_name_format(judge_name, expected_output):
+    """Test the conversion of judge names from 'last, first' to 'first last' format, with proper suffix placement."""
+    result = convert_judge_name_format_from_last_comma_first_to_first_then_last(judge_name)
+    assert result == expected_output

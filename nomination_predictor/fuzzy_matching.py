@@ -127,8 +127,8 @@ def find_matches_with_blocking(
     congress_df: pd.DataFrame,
     fjc_df: pd.DataFrame,
     threshold: int = 80,
-    name_weight: float = 0.5,
-    court_weight: float = 0.3,
+    name_weight: float = 0.7,
+    court_weight: float = 0.1,
     date_weight: float = 0.2,
     blocking_column: str = "last_name",
 ) -> pd.DataFrame:
@@ -205,11 +205,11 @@ def find_matches_with_blocking(
         for fjc_idx, fjc_row in potential_matches.iterrows():
             # Calculate component similarities
             name_sim = calculate_name_similarity(
-                congress_row.get("full_name", ""), fjc_row.get("name", "")
+                congress_row.get("full_name_from_description", ""), fjc_row.get("full_name_concatenated", "")
             )
 
             court_sim = calculate_court_similarity(
-                congress_row.get("court_name", ""), fjc_row.get("court", "")
+                congress_row.get("description", ""), fjc_row.get("court_name", "")
             )
 
             date_sim = calculate_date_similarity(
@@ -368,6 +368,11 @@ def analyze_match_failures(
     Returns:
         Tuple of (unmatched_df, reason_counts, examples)
     """
+    # Check if dataframe is empty
+    if nominees_df.empty:
+        logger.info("Empty dataframe provided, nothing to analyze")
+        return pd.DataFrame(), pd.DataFrame(), {}
+        
     # Identify unmatched records
     unmatched = (
         nominees_df[nominees_df["match_score"] < threshold].copy()
@@ -407,8 +412,14 @@ def analyze_match_failures(
     # Get examples for each failure reason
     examples = {}
     for reason in reason_counts["Failure Reason"].unique():
-        examples[reason] = unmatched[unmatched["failure_reason"] == reason].head(3)[
-            ["full_name", "court_clean", "match_score", "failure_reason"]
-        ]
+        # Check which columns exist in the DataFrame before accessing them
+        available_columns = ["failure_reason"]
+        
+        for col in ["full_name", "court_clean", "match_score"]:
+            if col in unmatched.columns:
+                available_columns.append(col)
+                
+        # Get examples with only available columns
+        examples[reason] = unmatched[unmatched["failure_reason"] == reason].head(3)[available_columns]
 
     return unmatched, reason_counts, examples
