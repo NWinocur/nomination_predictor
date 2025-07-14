@@ -316,9 +316,9 @@ def main(
 #    tuple = (president_number, first_inauguration_date, last_day_in_office_or_None)
 # ---------------------------------------------------------------------------
 
-PRESIDENT_TERMS = [
-    # Modern era (you can extend backward easily)
-    (46, date(2021, 1, 20), None),  # Joseph R. Biden
+PRESIDENCY_DATES = [
+    (47, date(2025, 1, 20), date(2029, 1, 20)), # using projected end of single term is the simplest way I can think to program for
+    (46, date(2021, 1, 20), date(2025, 1, 20)),
     (45, date(2017, 1, 20), date(2021, 1, 20)),
     (44, date(2009, 1, 20), date(2017, 1, 20)),
     (43, date(2001, 1, 20), date(2009, 1, 20)),
@@ -339,11 +339,24 @@ PRESIDENT_TERMS = [
     (28, date(1913, 3, 4), date(1921, 3, 4)),
     (27, date(1909, 3, 4), date(1913, 3, 4)),
     (26, date(1901, 9, 14), date(1909, 3, 4)),
-    #  … extend farther back as needed …
+    (25, date(1897, 3, 4), date(1901, 9, 14)),
+    (24, date(1893, 3, 4), date(1897, 3, 4)),
+    (23, date(1889, 3, 4), date(1893, 3, 4)),
+    (22, date(1885, 3, 4), date(1889, 3, 4)),
+    (21, date(1881, 9, 19), date(1885, 3, 4)),
+    (20, date(1881, 3, 4,), date(1881, 9, 19)),
+    (19, date(1877, 3, 4), date(1881, 3, 4)),
+    (18, date(1869, 3, 4), date(1877, 3, 4)),
+    (17, date(1865, 4, 15), date(1869, 3, 4)),
+    (16, date(1861, 3, 4), date(1865, 4, 15)),
+    (15, date(1857, 3, 4), date(1861, 3, 4)),
+    (14, date(1853, 3, 4), date(1857, 3, 4)),
+    # if you're able to retrieve judicial & congressional data via API dating back further, congratulations on your data gathering!
+    # Until then this is good enough for the data I've been able to obtain. 
 ]
 
 # Pre-sort newest-first so we can break quickly in lookups
-PRESIDENT_TERMS.sort(key=lambda t: t[1], reverse=True)
+PRESIDENCY_DATES.sort(key=lambda t: t[1], reverse=True)
 
 
 # ---------------------------------------------------------------------------
@@ -364,16 +377,31 @@ def _election_day(year: int) -> date:
     return first_monday + timedelta(days=1)
 
 
-@lru_cache(None)
-def _president_record(d: date) -> tuple[int, date]:
+def _convert_to_date(d):
+    """Convert datetime or pandas Timestamp to date if needed."""
+    if hasattr(d, 'date') and callable(getattr(d, 'date')):
+        return d.date()
+    return d
+
+
+def _presidency_record(d) -> tuple[int, date]:
     """
     Return (president_number, first_inauguration_date_of_that_presidency)
     for the date supplied.  Raises ValueError if out of range.
+    
+    Args:
+        d: date, datetime or pandas Timestamp object
+        
+    Returns:
+        Tuple of (president_number, first_inauguration_date)
     """
-    for number, start, end in PRESIDENT_TERMS:
-        if d >= start and (end is None or d < end):
+    # Convert datetime/Timestamp to date if needed
+    d_date = _convert_to_date(d)
+    
+    for number, start, end in PRESIDENCY_DATES:
+        if d_date >= start and (end is None or d_date < end):
             return number, start
-    raise ValueError(f"Date {d} out of president table range.")
+    raise ValueError(f"Date {d} out of presidency table range.")
 
 
 # ---------------------------------------------------------------------------
@@ -381,49 +409,70 @@ def _president_record(d: date) -> tuple[int, date]:
 # ---------------------------------------------------------------------------
 
 
-def president_number(d: date) -> int:
-    """38 for Gerald Ford, 46 for Joe Biden, …"""
-    return _president_record(d)[0]
+def president_number(d) -> int:
+    """38 for Gerald Ford, 46 for Joe Biden, …
+    
+    Args:
+        d: date, datetime or pandas Timestamp object
+    """
+    return _presidency_record(d)[0]
 
 
-def presidential_term_index(d: date) -> int:
+def presidential_term_index(d) -> int:
     """
     1 for the first four-year term of that president,
     2 for the second, 3/4 for FDR, etc.
+    
+    Args:
+        d: date, datetime or pandas Timestamp object
     """
-    number, first_inauguration = _president_record(d)
+    d_date = _convert_to_date(d)
+    number, first_inauguration = _presidency_record(d_date)
     # Years (minus a day fudge) elapsed since first inauguration
-    years_elapsed = (d - first_inauguration).days // 365.2425
+    years_elapsed = (d_date - first_inauguration).days // 365.2425
     return int(years_elapsed // 4) + 1
 
 
-def days_into_current_term(d: date) -> int:
-    """1-based: inauguration day itself returns 1."""
-    number, first_inauguration = _president_record(d)
-    term_idx = presidential_term_index(d)
+def days_into_current_term(d) -> int:
+    """1-based: inauguration day itself returns 1.
+    
+    Args:
+        d: date, datetime or pandas Timestamp object
+    """
+    d_date = _convert_to_date(d)
+    number, first_inauguration = _presidency_record(d_date)
+    term_idx = presidential_term_index(d_date)
     term_start = first_inauguration.replace(year=first_inauguration.year + 4 * (term_idx - 1))
-    return (d - term_start).days + 1
+    return (d_date - term_start).days + 1
 
 
-def days_until_next_presidential_election(d: date) -> int:
+def days_until_next_presidential_election(d) -> int:
     """
     Count of days from `d` (exclusive) up to the **next** presidential-year
     Election Day (years divisible by 4). Returns 0 if `d` *is* Election Day.
+    
+    Args:
+        d: date, datetime or pandas Timestamp object
     """
-    year = d.year
-    while year % 4 != 0 or d > _election_day(year):
+    d_date = _convert_to_date(d)
+    year = d_date.year
+    while year % 4 != 0 or d_date > _election_day(year):
         year += 1
-    return (_election_day(year) - d).days
+    return (_election_day(year) - d_date).days
 
 
-def days_until_next_midterm_election(d: date) -> int:
+def days_until_next_midterm_election(d) -> int:
     """
     Days until the next even-year Election Day **that is not a presidential year**.
+    
+    Args:
+        d: date, datetime or pandas Timestamp object
     """
-    year = d.year
-    while year % 2 != 0 or year % 4 == 0 or d > _election_day(year):
+    d_date = _convert_to_date(d)
+    year = d_date.year
+    while year % 2 != 0 or year % 4 == 0 or d_date > _election_day(year):
         year += 1
-    return (_election_day(year) - d).days
+    return (_election_day(year) - d_date).days
 
 
 # ----------------  CONGRESS & SESSION  -------------------------------------
@@ -433,27 +482,35 @@ CONGRESS_START_MONTH_PRE20TH = 3  # March 4 before 1935
 CONGRESS_START_MONTH_20TH = 1  # Jan   3 starting 1935
 
 
-def congress_number(d: date) -> int:
+def congress_number(d) -> int:
     """
     118  → Jan-3-2023 to Jan-3-2025, etc.
     Formula: each Congress spans two calendar years, starting in odd years.
+    
+    Args:
+        d: date, datetime or pandas Timestamp object
     """
-    if d < date(1789, 3, 4):
+    d_date = _convert_to_date(d)
+    if d_date < date(1789, 3, 4):
         raise ValueError("Congress did not yet exist.")
-    start_year = d.year if d.year % 2 else d.year - 1
+    start_year = d_date.year if d_date.year % 2 else d_date.year - 1
     return (start_year - CONGRESS_FIRST_YEAR) // 2 + 1
 
 
-def congress_session(d: date) -> int:
+def congress_session(d) -> int:
     """
     1  → first (odd-year) session
     2  → second (even-year) session
     3  → anything else (special/emergency)
+    
+    Args:
+        d: date, datetime or pandas Timestamp object
     """
-    cong_start_year = d.year if d.year % 2 else d.year - 1
-    if d.year == cong_start_year:
+    d_date = _convert_to_date(d)
+    cong_start_year = d_date.year if d_date.year % 2 else d_date.year - 1
+    if d_date.year == cong_start_year:
         return 1
-    elif d.year == cong_start_year + 1:
+    elif d_date.year == cong_start_year + 1:
         return 2
     else:
         return 3

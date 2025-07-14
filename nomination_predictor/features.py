@@ -20,6 +20,8 @@ from nameparser import HumanName
 import pandas as pd
 from tqdm import tqdm
 
+from nomination_predictor.name_matching import perform_exact_name_matching
+
 
 def normalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -193,6 +195,38 @@ def filter_non_judicial_nominations(
     )
 
     return filtered_nominations
+
+
+def filter_dash_zero_citations(frame_with_citations: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filter out rows where the 'citation' value ends with '-0'.
+    
+    These records typically lack critical information (nomination dates, confirmation dates),
+    helpful information (person's name), or are not for judicial positions.
+    
+    Args:
+        frame_with_citations: DataFrame containing records with 'citation' column
+        
+    Returns:
+        DataFrame with filtered rows
+    """
+    # Make a copy to avoid SettingWithCopyWarning
+    df_copy = frame_with_citations.copy()
+    
+    # Find citations ending with '-0'
+    dash_zero_mask = df_copy["citation"].str.endswith("-0", na=False)
+    
+    # Count and log what we're removing
+    dash_zero_count = dash_zero_mask.sum()
+    logger.info(f"Found {dash_zero_count} citations ending with '-0'")
+    
+    # Filter out the problematic records
+    filtered_df = df_copy[~dash_zero_mask]
+    
+    # Log the results
+    logger.info(f"Removed {len(df_copy) - len(filtered_df)}/{len(df_copy)} records with '-0' citations")
+    
+    return filtered_df
 
 
 def _safe_parse_json(json_str: str) -> dict:
@@ -670,3 +704,61 @@ def extract_name_and_location_columns(
 
     return result_df
 
+
+def link_unconfirmed_nominations(
+    cong_df: pd.DataFrame,
+    fjc_other_df: pd.DataFrame,
+    latest_text_col: str = "latestaction_text",
+    cong_name_col: str = "full_name_from_description",
+) -> pd.DataFrame:
+    """
+    Link un-confirmed Congress rows to FJC other-nominations:
+    • Select Congress rows with missing NID **and** not confirmed.
+    • Exact-name match (last → first → MI) against FJC 'other nominations'.
+    • Fill the NID back into congress_df.  Returns an updated copy.
+    
+    Prerequisites:
+    • cong_df must have a "nid" column
+    • cong_df must have a "latestaction_text" column
+    * fjc_other_df must have had expected columns added via name_matching module's "prep_fjc_other(fjc_other_df)"
+    """
+
+    # Filter Congress side
+    mask_missing = cong_df["nid"].isna()
+    mask_not_conf = ~cong_df[latest_text_col].str.contains("confirmed", case=False, na=False)
+    cong_unc = cong_df[mask_missing & mask_not_conf].copy()
+
+    if cong_unc.empty:
+        logger.info("No un-confirmed Congress rows without NID — skipping.")
+        return cong_df
+
+    # Name match (reuse existing function)
+    matches = perform_exact_name_matching(
+        cong_unc, fjc_other_df,
+        congress_name_col=cong_name_col,
+        fjc_name_col="judge_name",
+        nid_col="nid"
+    )
+
+    # Check if there were any matches found
+    if matches.empty or "congress_index" not in matches.columns:
+        logger.info("No matches found between unconfirmed nominations and FJC other nominations.")
+        return cong_df  # Return original dataframe unchanged
+
+    # Keep only unambiguous matches
+    nid_map = (matches[~matches["ambiguous"]]
+               .set_index("congress_index")["nid"])
+
+    # Fill back into the original dataframe
+    cong_df = cong_df.copy()
+    cong_df.loc[nid_map.index, "nid"] = nid_map.values
+
+    # 5Attach failure reason text for analysis
+    if "fjc_nom_failure_reason" in fjc_other_df.columns:
+        reason_map = (
+            fjc_other_df.set_index("nid")["other_nom_failure_reason"]
+        )
+        cong_df["failure_reason"] = cong_df["nid"].map(reason_map)
+
+    logger.success(f"Filled {nid_map.notna().sum()} additional NIDs from FJC other-nominations.")
+    return cong_df
