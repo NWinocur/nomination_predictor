@@ -1,5 +1,6 @@
 from datetime import datetime
 import re
+from typing import Optional
 
 from loguru import logger
 from nameparser import HumanName
@@ -10,9 +11,9 @@ def normalize_text(text) -> str:
     """
     Normalize text by selectively replacing Spanish diacritical marks with their non-accented equivalents.
     Does not affect numbers or other non-letter characters (to allow this to still be usable on longer strings containing dates).
-    
+
     Handles non-string inputs by converting to string or returning the input unchanged for non-string, non-numeric types.
-    
+
     Examples:
         'Núñez' -> 'nunez'
         'Peña' -> 'pena'
@@ -20,10 +21,10 @@ def normalize_text(text) -> str:
         'José Martínez Jr.' -> 'jose martinez jr.'
         123.45 -> '123.45'
         None -> ''
-        
+
     Args:
         text: Input text to normalize (can be string, numeric, or other)
-        
+
     Returns:
         Normalized text with Spanish accents removed and lowercased,
         or string version of numeric input, or original input for incompatible types
@@ -31,7 +32,7 @@ def normalize_text(text) -> str:
     # Handle empty values
     if text is None or text == "":
         return ""
-        
+
     # Handle non-string inputs
     if not isinstance(text, str):
         # Handle numeric types by converting to string
@@ -43,16 +44,29 @@ def normalize_text(text) -> str:
                 return ""
         else:
             # For other non-string types, log warning and return as-is
-            logger.warning(f"normalize_text received non-string, non-numeric input: {type(text).__name__}")
+            logger.warning(
+                f"normalize_text received non-string, non-numeric input: {type(text).__name__}"
+            )
             return str(text) if hasattr(text, "__str__") else ""
-    
+
     # Spanish specific replacements
     replacements = {
-        'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u', 'ü': 'u',
-        'ñ': 'n', 'Á': 'A', 'É': 'E', 'Í': 'I', 'Ó': 'O', 'Ú': 'U',
-        'Ü': 'U', 'Ñ': 'N'
+        "á": "a",
+        "é": "e",
+        "í": "i",
+        "ó": "o",
+        "ú": "u",
+        "ü": "u",
+        "ñ": "n",
+        "Á": "A",
+        "É": "E",
+        "Í": "I",
+        "Ó": "O",
+        "Ú": "U",
+        "Ü": "U",
+        "Ñ": "N",
     }
-    
+
     # Apply specific replacements
     normalized = text
     for accented, unaccented in replacements.items():
@@ -74,12 +88,12 @@ def split_names(df: pd.DataFrame, name_col: str) -> pd.DataFrame:
         DataFrame with added first, last, and mi (middle initial) columns
     """
     parsed = df[name_col].fillna("").apply(HumanName)
-    
+
     # Apply normalization to handle accented characters (e.g. ñ->n, á->a)
     df["first"] = parsed.apply(lambda n: normalize_text(n.first))
     df["last"] = parsed.apply(lambda n: normalize_text(n.last))
     df["mi"] = parsed.apply(lambda n: normalize_text(n.middle[:1] or ""))
-    
+
     return df
 
 
@@ -129,17 +143,17 @@ def perform_exact_name_matching(
     m1 = cong.merge(
         fjc_unique, on=["last", "first"], how="left", suffixes=("", "_fjc"), indicator=True
     )
-    
+
     # DIAGNOSTIC: Check if we found any matches at all
     found_matches = m1[m1["_merge"] == "both"]
     logger.info(f"Found {len(found_matches)} total records with last+first name matches")
-    
+
     if found_matches.empty:
         # Try last-name-only matches to diagnose data issues
-        logger.info("NO last+first name matches found. Checking last-name-only matches for diagnosis...")
-        last_only = cong.merge(
-            fjc_unique, on=["last"], how="inner", suffixes=("", "_fjc")
+        logger.info(
+            "NO last+first name matches found. Checking last-name-only matches for diagnosis..."
         )
+        last_only = cong.merge(fjc_unique, on=["last"], how="inner", suffixes=("", "_fjc"))
         logger.info(f"Found {len(last_only)} last-name-only matches")
         if not last_only.empty:
             logger.info("Showing up to first 10 last-name-only matches:")
@@ -278,3 +292,92 @@ def prep_fjc_other(fjc_other_df: pd.DataFrame) -> pd.DataFrame:
     fjc_other_df = pd.concat([fjc_other_df, parsed.apply(pd.Series)], axis=1)
     fjc_other_df = split_names(fjc_other_df, "judge_name")  # ← from name_matching.py
     return fjc_other_df
+
+
+# for parsing predecessor names from description
+_VICE_RE = re.compile(
+    r"""
+    \bvice\s+                     # literal 'vice' and following spaces
+    (?P<pre>[^,\.]+?)             # capture up to , or . (non-greedy)
+    (?=[,\.]|$)                   # look-ahead stop at comma / period / end
+    """,
+    flags=re.I | re.VERBOSE,
+)
+
+# for parsing reason for nomination from description
+_REASON_SPLIT_RE = re.compile(
+    r"""
+    \s*,\s*                 # the comma just before the reason
+    (retir|elevat|deceas|withdraw|no\ senate\ vote|reject|resign)
+    """,
+    flags=re.I | re.VERBOSE,
+)
+
+_PUBLIC_LAW_RE = re.compile(
+    r"p\.\s*l\.?", flags=re.I
+)  # p. l. / p.l.  # for parsing a thing typically inserted into descriptions about new positions
+
+
+# ------------------------------------------------------------------
+def extract_predecessor(desc: str) -> Optional[str]:
+    """
+    Parse `desc` (Congress nomination description) and return the predecessor
+    string after the word “vice …”, or the normalized “new position …” phrase.
+    Returns `None` when no predecessor phrase is found.
+
+    Handles all examples:
+      • commas / periods around suffixes (",jr.," etc.)
+      • various 'new position created by p. l. / P.L.' strings
+      • ignores case
+    """
+    if not isinstance(desc, str):
+        return None
+
+    #  locate the word "vice" (case-insensitive)
+    m = re.search(r"\bvice\b", desc, flags=re.I)
+    if not m:
+        return None
+
+    # substring that follows 'vice'
+    after = desc[m.end() :].lstrip()
+
+    # 2split off the trailing reason (retired / elevated / ...)
+    m_reason = _REASON_SPLIT_RE.search(after)
+    if m_reason:
+        name_part = after[: m_reason.start()]
+    else:
+        # If no comma+reason, take the rest of the string
+        name_part = after
+
+    name_part = name_part.strip(" ,.")
+
+    if not name_part:
+        return None
+
+    #   normalize 'new position'
+    if name_part.lower().startswith("a new position"):
+        name_part = _PUBLIC_LAW_RE.sub("public law", name_part.lower()).strip()
+        name_part = re.sub(r"\s+", " ", name_part)  # collapse spaces
+        # capitalize 'public law' phrase for readability
+        name_part = (
+            name_part.replace("public law", "public law").replace(
+                "public law", "public law"
+            )  # idempotent
+        )
+
+    return name_part
+
+
+# ------------------------------------------------------------------
+# 2.  dataframe patcher
+# ------------------------------------------------------------------
+def fill_predecessor_column(
+    df: pd.DataFrame, desc_col: str = "description", target_col: str = "nominees_0_predecessorname"
+) -> pd.DataFrame:
+    """
+    Populate missing values in `target_col` by parsing `desc_col`.
+    Returns the DataFrame with the column filled in-place.
+    """
+    mask = df[target_col].isna() | (df[target_col].str.strip() == "")
+    df.loc[mask, target_col] = df.loc[mask, desc_col].apply(extract_predecessor)
+    return df
