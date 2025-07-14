@@ -37,6 +37,7 @@ dependencies = [
     "types-tqdm",
     "typer",
     "tenacity",
+    "xgboost",
 ]
 requires-python = "==3.13.5"
 [project.optional-dependencies]
