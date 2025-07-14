@@ -8,6 +8,13 @@ from loguru import logger
 import pandas as pd
 from tqdm import tqdm
 
+from nomination_predictor.config import (
+    AMBIGUITY_THRESHOLD,
+    COURT_WEIGHT,
+    DATE_WEIGHT,
+    MATCH_THRESHOLD,
+    NAME_WEIGHT,
+)
 from nomination_predictor.fuzzy_matching import (
     analyze_match_failures,
     calculate_court_similarity,
@@ -20,10 +27,10 @@ from nomination_predictor.fuzzy_matching import (
 def perform_fuzzy_matching(
     cong_df: pd.DataFrame, 
     fjc_df: pd.DataFrame, 
-    threshold: int = 80, 
-    name_weight: float = 0.5, 
-    court_weight: float = 0.3, 
-    date_weight: float = 0.2
+    threshold: int = int(MATCH_THRESHOLD*100), 
+    name_weight: float = NAME_WEIGHT, 
+    court_weight: float = COURT_WEIGHT, 
+    date_weight: float = DATE_WEIGHT
 ) -> pd.DataFrame:
     """
     Perform fuzzy matching between Congress.gov nominations and FJC judicial service records.
@@ -92,11 +99,11 @@ def categorize_matches(match_df: pd.DataFrame, threshold: int = 80) -> Dict[str,
     # Lower confidence but potential matches (some signal but below threshold)
     medium_confidence = match_df[
         (match_df["match_score"] < threshold) & 
-        (match_df["match_score"] >= threshold * 0.7)
+        (match_df["match_score"] >= threshold * MATCH_THRESHOLD)
     ].copy()
     
     # Very low confidence or no matches
-    low_confidence = match_df[match_df["match_score"] < threshold * 0.7].copy()
+    low_confidence = match_df[match_df["match_score"] < threshold * MATCH_THRESHOLD].copy()
     
     # Sort by match score descending if any results exist
     if not high_confidence.empty:
@@ -114,10 +121,10 @@ def categorize_matches(match_df: pd.DataFrame, threshold: int = 80) -> Dict[str,
 
 
 def find_ambiguous_matches(
-    match_df: pd.DataFrame, 
+    cong_df: pd.DataFrame, 
     fjc_df: pd.DataFrame, 
     threshold: int = 80, 
-    ambiguity_threshold: float = 0.9
+    ambiguity_threshold: float = AMBIGUITY_THRESHOLD
 ) -> pd.DataFrame:
     """
     Identify ambiguous matches where multiple FJC records have similar scores.
@@ -132,31 +139,31 @@ def find_ambiguous_matches(
         DataFrame with ambiguous matches and their alternatives
     """
     # Check if either DataFrame is empty or missing required columns
-    if match_df.empty or fjc_df.empty:
-        logger.warning("Empty DataFrame provided to find_ambiguous_matches")
+    if cong_df.empty or fjc_df.empty:
+        logger.warning("Empty Congress DataFrame provided to find_ambiguous_matches")
         return pd.DataFrame()
     
-    if "match_score" not in match_df.columns:
-        logger.warning("match_score column missing from match_df in find_ambiguous_matches")
+    if "match_score" not in cong_df.columns:
+        logger.warning("match_score column missing from Congress DataFrame in find_ambiguous_matches")
         return pd.DataFrame()
     
     if "nid" not in fjc_df.columns:
-        logger.warning("nid column missing from fjc_df in find_ambiguous_matches")
+        logger.warning("nid column missing from FJC DataFrame in find_ambiguous_matches")
         return pd.DataFrame()
         
     ambiguous_matches = []
     
     # Only consider records that meet the threshold
-    potential_matches = match_df[match_df["match_score"] >= threshold].copy()
+    potential_matches = cong_df[cong_df["match_score"] >= threshold].copy()
     
     if potential_matches.empty:
         return pd.DataFrame()
     
     # For each match, see if there are other close candidates
-    for _, row in potential_matches.iterrows():
-        citation = row.get("citation")
-        top_score = row.get("match_score")
-        top_nid = row.get("nid")
+    for _, cong_row in potential_matches.iterrows():
+        citation = cong_row.get("citation")
+        top_score = cong_row.get("match_score")
+        top_nid = cong_row.get("nid")
         
         # Skip if any required values are missing
         if citation is None or top_score is None or top_nid is None:
@@ -167,12 +174,13 @@ def find_ambiguous_matches(
         
         for _, fjc_row in fjc_df.iterrows():
             # Extract data safely with fallbacks to empty strings if missing
-            name_sim = calculate_name_similarity(row.get("full_name", ""), fjc_row.get("judge_name", ""))
-            court_sim = calculate_court_similarity(row.get("court_name", ""), fjc_row.get("court_name", ""))
-            date_sim = calculate_date_similarity(row.get("receiveddate", ""), fjc_row.get("nomination_date", ""))
+            logger.info(f"comparing {cong_row.get('full_name_from_description', '')} to {fjc_row.get('full_name_concatenated', '')}")
+            name_sim = calculate_name_similarity(cong_row.get("full_name_from_description", ""), fjc_row.get("full_name_concatenated", ""))
+            court_sim = calculate_court_similarity(cong_row.get("description", ""), fjc_row.get("court_name", ""))
+            date_sim = calculate_date_similarity(cong_row.get("receiveddate", ""), fjc_row.get("nomination_date", ""))
             
             # Use same weights as in original matching
-            score = (name_sim * 0.5) + (court_sim * 0.3) + (date_sim * 0.2)
+            score = (name_sim * NAME_WEIGHT) + (court_sim * COURT_WEIGHT) + (date_sim * DATE_WEIGHT)
             
             fjc_nid = fjc_row.get("nid")
             # Skip if nid is missing
@@ -285,7 +293,7 @@ def find_fjc_unmatched_records(match_df: pd.DataFrame, fjc_df: pd.DataFrame) -> 
 def generate_matching_summary(
     match_df: pd.DataFrame,
     fjc_df: pd.DataFrame,
-    threshold: int = 80,
+    threshold: int = int(MATCH_THRESHOLD*100), # multiplied because displaying as percentile
     display_limit: int = 10
 ) -> Dict[str, pd.DataFrame]:
     """
@@ -334,8 +342,29 @@ def generate_matching_summary(
     # Get categorized matches
     categorized = categorize_matches(match_df, threshold)
     
-    # Find ambiguous matches
-    ambiguous = find_ambiguous_matches(match_df, fjc_df, threshold)
+    # Filter out already matched records (rows with non-null nid values)
+    # Only look for ambiguity in records that haven't been definitively matched yet
+    unmatched_congress_df = match_df[match_df['nid'].isna()].copy() if 'nid' in match_df.columns else match_df.copy()
+    
+    # Only consider FJC records that have not already been matched
+    # This is a significant optimization to avoid reprocessing all FJC records
+    if 'nid' in match_df.columns and 'nid' in fjc_df.columns:
+        # Get the NIDs of FJC records that have already been matched
+        matched_nids = match_df[match_df['nid'].notna()]['nid'].unique()
+        
+        # Filter out FJC records that have already been matched
+        relevant_fjc_df = fjc_df[~fjc_df['nid'].isin(matched_nids)].copy() if matched_nids.size > 0 else fjc_df.copy()
+        
+        logger.info(f"Excluded {len(matched_nids)} already matched FJC records from ambiguity check")
+    else:
+        # If we can't filter by NID, just use the whole FJC dataframe
+        relevant_fjc_df = fjc_df.copy()
+    
+    logger.info(f"Processing {len(unmatched_congress_df)} unmatched records instead of {len(match_df)} total records")
+    logger.info(f"Using {len(relevant_fjc_df)} relevant FJC records instead of {len(fjc_df)} total records")
+    
+    # Find ambiguous matches only in the unmatched records
+    ambiguous = find_ambiguous_matches(unmatched_congress_df, relevant_fjc_df, threshold)
     
     # Find unmatched Congress records
     cong_unmatched = find_unmatched_records(match_df, threshold)
@@ -392,7 +421,7 @@ def generate_matching_summary(
 def update_dataframe_with_matches(
     cong_df: pd.DataFrame,
     match_results: pd.DataFrame,
-    threshold: int = 80,
+    threshold: int = int(MATCH_THRESHOLD*100),
     column_name: str = "fjc_nid"
 ) -> pd.DataFrame:
     """

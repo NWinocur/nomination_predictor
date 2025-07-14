@@ -114,6 +114,13 @@ MODELS_DIR = PROJ_ROOT / "models"
 REPORTS_DIR = PROJ_ROOT / "reports"
 FIGURES_DIR = REPORTS_DIR / "figures"
 
+# fuzzy-matcher parameters; weights must add up to 1 or they may be ignored
+NAME_WEIGHT = 0.97
+COURT_WEIGHT = 0.01
+DATE_WEIGHT = 0.02
+MATCH_THRESHOLD = 0.7
+AMBIGUITY_THRESHOLD = 0.9
+
 # Ensure all directories exist
 for directory in [
     DATA_DIR, RAW_DATA_DIR, INTERIM_DATA_DIR,

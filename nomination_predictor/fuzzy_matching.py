@@ -3,9 +3,17 @@ import re
 from typing import Dict, Tuple
 
 from loguru import logger
+from nameparser import HumanName
 import pandas as pd
 from thefuzz import fuzz
 from tqdm import tqdm
+
+from nomination_predictor.config import (
+    COURT_WEIGHT,
+    DATE_WEIGHT,
+    MATCH_THRESHOLD,
+    NAME_WEIGHT,
+)
 
 # ---------------------------------------------------------------------------
 # FUZZY MATCHING PIPELINE
@@ -38,7 +46,8 @@ def normalize_date_format(date_str):
 
 def calculate_name_similarity(name1: str, name2: str) -> int:
     """
-    Calculate similarity between two judge names using fuzzy matching.
+    Calculate similarity between two judge names using nameparser for standardization
+    and fuzzy matching for comparison.
 
     Args:
         name1: First name string
@@ -49,22 +58,28 @@ def calculate_name_similarity(name1: str, name2: str) -> int:
     """
     if not name1 or not name2 or pd.isna(name1) or pd.isna(name2):
         return 0
-
-    # Normalize names: lowercase, strip extra whitespace
-    name1 = str(name1).lower().strip()
-    name2 = str(name2).lower().strip()
-
-    # Handle last name, first name format
-    if "," in name1:
-        parts = name1.split(",", 1)
-        name1 = f"{parts[1].strip()} {parts[0].strip()}"
-
-    if "," in name2:
-        parts = name2.split(",", 1)
-        name2 = f"{parts[1].strip()} {parts[0].strip()}"
-
+    
+    # Use nameparser to standardize both names
+    parsed_name1 = HumanName(str(name1))
+    parsed_name2 = HumanName(str(name2))
+    
+    # Construct standardized versions of the names with consistent ordering
+    standardized_name1 = " ".join(filter(None, [
+        parsed_name1.first,
+        parsed_name1.middle,
+        parsed_name1.last,
+        parsed_name1.suffix
+    ]))
+    
+    standardized_name2 = " ".join(filter(None, [
+        parsed_name2.first,
+        parsed_name2.middle,
+        parsed_name2.last,
+        parsed_name2.suffix
+    ]))
+    
     # Calculate token set ratio which handles word order and partial matches well
-    return fuzz.token_set_ratio(name1, name2)
+    return fuzz.token_set_ratio(standardized_name1, standardized_name2)
 
 
 def calculate_court_similarity(court1: str, court2: str) -> int:
@@ -126,10 +141,10 @@ def calculate_date_similarity(date1: str, date2: str, max_days_diff: int = 45) -
 def find_matches_with_blocking(
     congress_df: pd.DataFrame,
     fjc_df: pd.DataFrame,
-    threshold: int = 80,
-    name_weight: float = 0.7,
-    court_weight: float = 0.1,
-    date_weight: float = 0.2,
+    threshold: int = MATCH_THRESHOLD,
+    name_weight: float = NAME_WEIGHT,
+    court_weight: float = COURT_WEIGHT,
+    date_weight: float = DATE_WEIGHT,
     blocking_column: str = "last_name",
 ) -> pd.DataFrame:
     """
@@ -355,7 +370,7 @@ def calculate_match_score(cong_row, fjc_row, name_weight=0.6, court_weight=0.25,
 
 
 def analyze_match_failures(
-    nominees_df: pd.DataFrame, threshold: int = 80
+    nominees_df: pd.DataFrame, threshold: int = int(MATCH_THRESHOLD*100)
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
     """
     Analyze records that didn't meet the match score threshold and provide
