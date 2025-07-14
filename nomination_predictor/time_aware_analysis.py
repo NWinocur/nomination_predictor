@@ -8,7 +8,6 @@ from typing import Any, Dict, Optional, Tuple
 
 from loguru import logger
 import pandas as pd
-from thefuzz import fuzz
 from tqdm import tqdm
 
 from nomination_predictor.config import INTERIM_DATA_DIR, RAW_DATA_DIR
