@@ -138,10 +138,12 @@ def calculate_date_similarity(date1: str, date2: str, max_days_diff: int = 45) -
     return int(100 * (1 - days_diff / max_days_diff))
 
 
+
+
 def find_matches_with_blocking(
     congress_df: pd.DataFrame,
     fjc_df: pd.DataFrame,
-    threshold: int = MATCH_THRESHOLD,
+    threshold: int = int(MATCH_THRESHOLD*100),
     name_weight: float = NAME_WEIGHT,
     court_weight: float = COURT_WEIGHT,
     date_weight: float = DATE_WEIGHT,

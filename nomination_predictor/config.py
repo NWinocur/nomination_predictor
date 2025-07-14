@@ -114,10 +114,10 @@ MODELS_DIR = PROJ_ROOT / "models"
 REPORTS_DIR = PROJ_ROOT / "reports"
 FIGURES_DIR = REPORTS_DIR / "figures"
 
-# fuzzy-matcher parameters; weights must add up to 1 or they may be ignored
-NAME_WEIGHT = 0.97
-COURT_WEIGHT = 0.01
-DATE_WEIGHT = 0.02
+# fuzzy-matcher parameters; weights must add up to 1 or may be ignored
+NAME_WEIGHT = 0.5
+COURT_WEIGHT = 0.3
+DATE_WEIGHT = 0.2
 MATCH_THRESHOLD = 0.7
 AMBIGUITY_THRESHOLD = 0.9
 
