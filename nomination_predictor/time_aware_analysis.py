@@ -370,8 +370,18 @@ def fill_missing_appointing_presidents(df: pd.DataFrame) -> pd.DataFrame:
     # Create a copy to avoid modifying the original
     result_df = df.copy()
     
+    # Check if appointing_president_(1) column is already fully populated
+    if not result_df["appointing_president_(1)"].isna().any():
+        logger.info("No missing appointing president values detected - dataframe already fully populated")
+        return result_df
+    
     # Only process rows where appointing_president_(1) is missing but nomination_date is available
     mask = result_df["appointing_president_(1)"].isna() & result_df["receiveddate"].notna()
+    
+    # Check if we have any rows to process
+    if not mask.any():
+        logger.info("No rows available to fill: either no missing appointing president values or missing reception dates")
+        return result_df
     
     # Apply the president_name function to get the appointing president
     result_df.loc[mask, "appointing_president_(1)"] = \
