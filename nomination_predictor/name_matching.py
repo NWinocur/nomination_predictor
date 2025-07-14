@@ -313,6 +313,98 @@ _REASON_SPLIT_RE = re.compile(
     flags=re.I | re.VERBOSE,
 )
 
+
+def extract_vacancy_reason(desc: str) -> Optional[str]:
+    """
+    Extract vacancy reason from the description field.
+    
+    Takes a description string that might contain reason information
+    after a judge's name (e.g., "vice John Smith, retiring") and extracts
+    the standardized reason category.
+    
+    Args:
+        desc: String containing description text
+        
+    Returns:
+        Standardized vacancy reason or None if not found
+        
+    Example:
+        "vice John Smith, retiring" -> "Retirement"
+        "vice Jane Doe, elevated" -> "Appointment to Another Judicial Position"
+    """
+    if not isinstance(desc, str) or not desc:
+        return None
+        
+    # First check if there's a predecessor mentioned
+    m = _VICE_RE.search(desc)
+    if not m:
+        return None
+        
+    # Check if predecessor contains "new position" phrase
+    predecessor = m.group("pre").lower()
+    if "new position" in predecessor:
+        return "New Position"
+        
+    # Look for a reason after the predecessor's name
+    reason_match = _REASON_SPLIT_RE.search(desc)
+    if not reason_match:
+        return None
+        
+    # Map the raw reason text to standardized categories
+    reason_text = reason_match.group(1).lower()
+    
+    # Map variations to standardized categories
+    if "retir" in reason_text:
+        return "Retirement"
+    elif "elevat" in reason_text:
+        return "Elevated"
+    elif "deceas" in reason_text:
+        return "Death"
+    elif "resign" in reason_text:
+        return "Resignation"
+    elif "withdr" in reason_text:
+        return "Withdrawal"
+    elif "reject" in reason_text:
+        return "Rejection"
+    elif "reappoint" in reason_text:
+        return "Reappointment"
+    
+    # If we detected a reason pattern but it doesn't match our categories,
+    # return the raw text for further analysis
+    return reason_text.capitalize()
+
+
+def fill_vacancy_reason_column(df: pd.DataFrame,
+                               desc_col: str = "description",
+                               target_col: str = "vacancy_reason"
+                              ) -> pd.DataFrame:
+    """
+    Populate missing values in `target_col` by parsing vacancy reasons from `desc_col`.
+    
+    Args:
+        df: DataFrame containing the data
+        desc_col: Name of column containing description text
+        target_col: Name of column to populate with vacancy reasons
+        
+    Returns:
+        DataFrame with vacancy_reason column filled
+    """
+    # Create the column if it doesn't exist
+    if target_col not in df.columns:
+        df[target_col] = None
+    
+    # Only process rows where target column is missing and description is available
+    mask = df[target_col].isna() & df[desc_col].notna()
+    
+    # Apply the extraction function
+    df.loc[mask, target_col] = df.loc[mask, desc_col].apply(extract_vacancy_reason)
+    
+    # Log the number of filled values
+    num_filled = mask.sum()
+    logger.info(f"Extracted {num_filled} vacancy reasons from descriptions")
+    
+    return df
+
 _PUBLIC_LAW_RE = re.compile(
     r"p\.\s*l\.?", flags=re.I
 )  # p. l. / p.l.  # for parsing a thing typically inserted into descriptions about new positions
