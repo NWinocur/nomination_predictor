@@ -422,9 +422,27 @@ def fetch_judicial_nominations(
     congresses = range(most_recent_congress, oldest_congress-1, -1)
     success = False
     
+    # First check which congresses have nomination data and how many records each has
+    logger.info("Checking nomination counts for all requested congresses...")
+    available_counts = {}
     for congress in congresses:
         try:
-            logger.info(f"Fetching judicial nominations for the {congress}th Congress...")
+            # Get total civilian nomination count (faster, no judicial filtering at this stage)
+            count = congress_client.check_civilian_nominations_count(congress)
+            available_counts[congress] = count
+            logger.info(f"Found {count} civilian nomination records for the {congress}th Congress")
+        except Exception as e:
+            logger.error(f"  ❌ Error checking nominations for {congress}th Congress: {str(e)}")
+            available_counts[congress] = 0
+    
+    # Then fetch full details for congresses that have records
+    for congress in congresses:
+        try:
+            if available_counts.get(congress, 0) == 0:
+                logger.info(f"Skipping {congress}th Congress (no records available)")
+                continue
+                
+            logger.info(f"Fetching {available_counts[congress]} judicial nominations for the {congress}th Congress...")
             nominations = congress_client.get_judicial_nominations(congress, auto_paginate=auto_paginate)
             if nominations:
                 logger.info(f"  ✓ Retrieved {len(nominations)} judicial nominations")
@@ -792,6 +810,7 @@ def main(
                 logger.info(f"{key}: {value}")
         else:
             logger.warning("No data retrieved from Congress.gov API")
+        # Return early, don't continue with web scraping
         return
 
     # Continue with existing web scraping logic if not using API or API failed

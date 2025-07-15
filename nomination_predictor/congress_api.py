@@ -432,6 +432,43 @@ class CongressAPIClient:
         # This should never happen, but just in case
         raise RuntimeError(f"Failed to complete request after {max_retries} attempts with no specific error")
     
+    def check_civilian_nominations_count(self, congress: int) -> int:
+        """
+        Check how many civilian nominations are available for a specific Congress
+        without filtering for judicial nominations specifically.
+        
+        Args:
+            congress: Congress number (e.g., 118)
+            
+        Returns:
+            Total count of civilian nominations available
+            
+        Raises:
+            RuntimeError: If the API request fails
+        """
+        # First get all civilian nominations (exclude military)
+        params = {"isCivilian": "true"}
+        
+        endpoint = f"/nomination/{congress}"
+        url = f"{self.BASE_URL}{endpoint}"
+        
+        try:
+            # Make a single request to get the total count
+            response = self._make_request(url, params)
+            
+            # Get the total count from pagination info
+            if response and "pagination" in response and "count" in response["pagination"]:
+                total_count = response["pagination"]["count"]
+                return total_count
+            else:
+                return 0
+                
+        except Exception as e:
+            logger.error(f"Error checking nominations count for Congress {congress}: {str(e)}")
+            raise RuntimeError(f"Failed to check nominations count for Congress {congress}: {str(e)}")
+
+
+    
     def get_nominations(
         self, congress: int, params: Optional[Dict[str, Any]] = None, auto_paginate: bool = True
     ) -> Dict[str, Any]:
@@ -473,9 +510,17 @@ class CongressAPIClient:
             
             # Track nominations across pages
             nominations = response.get("nominations", [])
+            first_page_count = len(nominations)
+            total_count = response.get("pagination", {}).get("count", 0)
+            current_offset = first_page_count
+            
+            # Log the first page info
+            logger.info(f"Paging through Congress {congress} records 1-{first_page_count} of {total_count}")
             
             # Keep fetching until we run out of pages
             next_link = response["pagination"]["next"]
+            page_num = 2  # We've already processed page 1
+            
             while next_link:
                 # Extract link and make request
                 # Check if next_link is absolute or relative URL
@@ -484,18 +529,29 @@ class CongressAPIClient:
                 else:
                     next_url = f"{self.BASE_URL}{next_link}"  # Prepend base URL for relative paths
                 
-                logger.debug(f"Fetching next page: {next_url}")
+                # Extract offset from URL or use calculated value
+                offset_match = re.search(r'offset=(\d+)', next_url)
+                if offset_match:
+                    current_offset = int(offset_match.group(1))
+                
+                # Log the current page being fetched
+                logger.info(f"Paging through Congress {congress} records {current_offset+1}-{min(current_offset+20, total_count)} of {total_count} (page {page_num})")
+                
                 response = self._make_request(next_url)
+                page_records = response.get("nominations", [])
                 
                 # Add to our results
-                if "nominations" in response:
-                    nominations.extend(response["nominations"])
+                if page_records:
+                    nominations.extend(page_records)
+                    current_offset += len(page_records)
                     
                 # Check for more pages
                 next_link = response.get("pagination", {}).get("next")
+                page_num += 1
             
             # Update the aggregated response with all nominations
             all_nominations["nominations"] = nominations
+            logger.info(f"Completed pagination: fetched {len(nominations)} total records across {page_num-1} pages for Congress {congress}")
         
         return all_nominations
 
