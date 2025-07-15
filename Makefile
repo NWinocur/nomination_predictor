@@ -3,8 +3,8 @@
 #################################################################################
 
 PROJECT_NAME = nomination_predictor
-PYTHON_VERSION = 3.13.5
-PYTHON_INTERPRETER = python3.13
+PYTHON_VERSION = 3.12.3
+PYTHON_INTERPRETER = python3.12
 
 #################################################################################
 # COMMANDS                                                                      #
