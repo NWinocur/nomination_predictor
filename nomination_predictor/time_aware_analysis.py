@@ -393,6 +393,168 @@ def fill_missing_appointing_presidents(df: pd.DataFrame) -> pd.DataFrame:
     
     return result_df
 
+
+def fill_missing_party_of_appointing_presidents(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill missing values in the party_of_appointing_president_(1) column using nomination date."""
+    # Create a copy to avoid modifying the original
+    result_df = df.copy()
+    
+    # Check if party_of_appointing_president_(1) column exists, create if not
+    if "party_of_appointing_president_(1)" not in result_df.columns:
+        result_df["party_of_appointing_president_(1)"] = None
+        logger.info("Created party_of_appointing_president_(1) column which was missing")
+    
+    # Check if party_of_appointing_president_(1) column is already fully populated
+    if not result_df["party_of_appointing_president_(1)"].isna().any():
+        logger.info("No missing party of appointing president values detected - dataframe already fully populated")
+        return result_df
+    
+    # Only process rows where party_of_appointing_president_(1) is missing but receiveddate is available
+    mask = result_df["party_of_appointing_president_(1)"].isna() & result_df["receiveddate"].notna()
+    
+    # Check if we have any rows to process
+    if not mask.any():
+        logger.info("No rows available to fill: either no missing party values or missing reception dates")
+        return result_df
+    
+    # Apply the president_party function to get the party of the appointing president
+    result_df.loc[mask, "party_of_appointing_president_(1)"] = \
+        result_df.loc[mask, "receiveddate"].apply(president_party)
+    
+    # Log the number of filled values
+    num_filled = mask.sum()
+    logger.info(f"Filled {num_filled} missing party of appointing president values using nomination dates")
+    
+    return result_df
+
+
+def normalize_party_codes(df: pd.DataFrame, party_columns: list = None) -> pd.DataFrame:
+    """
+    Normalize party codes in specified columns to standard single-letter uppercase format.
+    
+    This ensures consistency for downstream analyses by standardizing various forms of party
+    names/codes to the canonical single-letter codes used throughout the project:
+    - 'D' for Democratic
+    - 'R' for Republican 
+    - Other standard codes for minor parties
+    
+    Args:
+        df: DataFrame containing party code column(s)
+        party_columns: List of column names to normalize. If None, defaults to 
+                       ['party_of_appointing_president_(1)'] if it exists
+    
+    Returns:
+        DataFrame with normalized party codes
+    """
+    # Create a copy to avoid modifying the original
+    result_df = df.copy()
+    
+    # If no columns specified, use default if it exists
+    if party_columns is None:
+        party_columns = []
+        if "party_of_appointing_president_(1)" in result_df.columns:
+            party_columns.append("party_of_appointing_president_(1)")
+    
+    # Dictionary for normalizing various forms of party names/codes
+    party_mapping = {
+        # Democratic variants
+        "democrat": "D",
+        "democratic": "D",
+        "democracy": "D",
+        "democrat party": "D",
+        "democratic party": "D",
+        "d": "D",
+        "dem": "D",
+        # Republican variants
+        "republican": "R",
+        "republicans": "R",
+        "republican party": "R",
+        "r": "R",
+        "rep": "R",
+        # Other parties
+        "federalist": "F",
+        "f": "F",
+        "whig": "W",
+        "w": "W",
+        "union": "U",
+        "u": "U",
+        "democratic-republican": "DR",
+        "dr": "DR",
+        "independent": "I",
+        "i": "I",
+        "libertarian": "L",
+        "l": "L",
+        "green": "G",
+        "g": "G"
+    }
+    
+    # Process each column
+    normalized_count = 0
+    for col in party_columns:
+        if col not in result_df.columns:
+            logger.warning(f"Column '{col}' not found in DataFrame, skipping")
+            continue
+        
+        # Only process non-NA values
+        mask = result_df[col].notna()
+        if not mask.any():
+            logger.info(f"No values to normalize in column '{col}'")
+            continue
+            
+        # Count values before normalization
+        before_count = result_df[col].value_counts().to_dict()
+        
+        # Track unmapped values and their row indices
+        unmapped_values = {}
+        
+        # Apply normalization function to each value
+        def normalize(idx_val_tuple):
+            idx, val = idx_val_tuple
+            if pd.isna(val):
+                return val
+            
+            # Convert to string, strip whitespace, lowercase for consistent lookup
+            val_str = str(val).strip().lower()
+            
+            # Check if value is in mapping dictionary
+            mapped_val = party_mapping.get(val_str, None)
+            
+            # If not in dictionary, record it and return original value
+            if mapped_val is None:
+                if val not in unmapped_values:
+                    unmapped_values[val] = []
+                unmapped_values[val].append(idx)
+                return val
+            
+            # Return mapped value
+            return mapped_val
+        
+        # Apply normalization with row indices
+        result_df.loc[mask, col] = [
+            normalize((idx, val)) 
+            for idx, val in zip(result_df.loc[mask].index, result_df.loc[mask, col])
+        ]
+        
+        # Log unmapped values with their row indices
+        if unmapped_values:
+            for val, indices in unmapped_values.items():
+                sample_indices = indices[:5]  # Limit to first 5 indices to avoid excessive logging
+                more_text = f" and {len(indices) - 5} more rows" if len(indices) > 5 else ""
+                logger.warning(
+                    f"Unmapped party value '{val}' found in column '{col}' at rows {sample_indices}{more_text} - kept as-is"
+                )
+        
+        # Count normalized values
+        after_count = result_df[col].value_counts().to_dict()
+        normalized_count += sum(mask)
+        
+        # Log the changes
+        logger.info(f"Normalized {sum(mask)} party codes in column '{col}'")
+        logger.debug(f"Before normalization: {before_count}")
+        logger.debug(f"After normalization: {after_count}")
+    
+    return result_df
+
 # ---------------------------------------------------------------------------
 # 2.  BASIC HELPERS
 # ---------------------------------------------------------------------------

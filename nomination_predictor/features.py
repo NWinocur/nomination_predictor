@@ -762,3 +762,28 @@ def link_unconfirmed_nominations(
 
     logger.success(f"Filled {nid_map.notna().sum()} additional NIDs from FJC other-nominations.")
     return cong_df
+
+
+def drop_unhelpfully_uninformative_columns(df_to_clean: pd.DataFrame) -> pd.DataFrame:
+    """
+    Drop columns from *df_to_clean* that are unhelpfully uninformative.
+    """
+    # Before: Show what columns we might delete
+    print("Columns with limited unique values:")
+    for col in sorted(df_to_clean.columns):
+        if df_to_clean[col].nunique() < 2 and df_to_clean[col].notna().all():
+            print(f"  - {col}: {df_to_clean[col].nunique()} unique value(s), 100% populated with '{df_to_clean[col].iloc[0]}'")
+        elif df_to_clean[col].nunique() == 1 and df_to_clean[col].isna().any():
+            non_null_pct = df_to_clean[col].notna().mean() * 100
+            print(f"  - {col}: 1 unique non-null value '{df_to_clean[col].dropna().iloc[0]}' ({non_null_pct:.1f}% of rows) - KEEPING")
+
+    # Drop only columns that are fully populated with the same value
+    dropped_cols = []
+    for col in sorted(df_to_clean.columns):
+        if df_to_clean[col].nunique() < 2 and df_to_clean[col].notna().all():
+            print(f"Dropping from {df_to_clean} - {col}: has {df_to_clean[col].nunique()} unique value(s) and 0 missing values")
+            df_to_clean.drop(col, inplace=True, axis=1)
+            dropped_cols.append(col)
+
+    print(f"\nDropped {len(dropped_cols)} columns that were fully populated with the same value")
+    return df_to_clean

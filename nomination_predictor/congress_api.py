@@ -496,6 +496,7 @@ class CongressAPIClient:
         # First get all civilian nominations (exclude military)
         params = {} if params is None else params.copy()
         params["isCivilian"] = "true"
+        params["limit"] = 250  # Use maximum allowed limit to reduce API calls
         
         endpoint = f"/nomination/{congress}"
         url = f"{self.BASE_URL}{endpoint}"
@@ -535,7 +536,7 @@ class CongressAPIClient:
                     current_offset = int(offset_match.group(1))
                 
                 # Log the current page being fetched
-                logger.info(f"Paging through Congress {congress} records {current_offset+1}-{min(current_offset+20, total_count)} of {total_count} (page {page_num})")
+                logger.info(f"Paging through Congress {congress} records {current_offset+1}-{min(current_offset+250, total_count)} of {total_count} (page {page_num})")
                 
                 response = self._make_request(next_url)
                 page_records = response.get("nominations", [])
