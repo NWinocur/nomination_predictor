@@ -64,7 +64,6 @@ def normalize_all_dataframes(dataframes_dict: Dict[str, pd.DataFrame]) -> Dict[s
     return normalized_dfs
 
 
-
 def extract_court_and_position(nominations_df: pd.DataFrame) -> pd.DataFrame:
     """
     Extract court and position information from nomination descriptions.
@@ -119,8 +118,6 @@ def extract_court_and_position(nominations_df: pd.DataFrame) -> pd.DataFrame:
     return result_df
 
 
-
-
 def merge_nominees_with_nominations(
     nominees_df: pd.DataFrame, nominations_df: pd.DataFrame, join_key: str = "citation"
 ) -> pd.DataFrame:
@@ -149,36 +146,37 @@ def merge_nominees_with_nominations(
     return merged
 
 
-def filter_non_judicial_nominations(
-    frame_with_position_titles: pd.DataFrame, non_judicial_titles: list[str]) -> pd.DataFrame:
+def filter_non_judicial_nominations(frame_with_position_titles: pd.DataFrame) -> pd.DataFrame:
     """
     Filter out non-judicial nominations based on position titles.
 
     Args:
-        frame_with_position_titles: DataFrame containing nomination records with 'nominees_0_positiontitle' and 'citation' columns
-        non_judicial_titles: List of strings indicating non-judicial position titles
+        frame_with_position_titles: DataFrame containing nomination records with 'nominees_0_positiontitle' and 'citation" and 'description' columns
+
 
     Returns:
         Tuple of (filtered_nominations_df, filtered_nominees_df)
     """
-    if non_judicial_titles is None or non_judicial_titles == []:
-        non_judicial_titles = [
-            "Attorney",
-            "Board",
-            "Commission",
-            "Director",
-            "Marshal",
-            "Assistant",
-            "Representative",
-            "Secretary of",
-            "Member of",
-        ]
+    non_judicial_titles = [
+        "Ambassador,Attorney",
+        "Board",
+        "Commission",
+        "Director",
+        "Marshal",
+        "Assistant",
+        "Representative",
+        "Secretary of",
+        "Member of",
+    ]
 
     # Make copies to avoid SettingWithCopyWarning
     df_copy = frame_with_position_titles.copy()
 
-    # Find citations of rows with non-judicial titles
+    # Find citations of rows with non-judicial titles in either "nominees_0_positiontitle" or "description"
     non_judicial_mask = df_copy["nominees_0_positiontitle"].str.contains(
+        "|".join(non_judicial_titles), na=False
+    )
+    non_judicial_mask = non_judicial_mask | df_copy["description"].str.contains(
         "|".join(non_judicial_titles), na=False
     )
     citations_to_drop = df_copy.loc[non_judicial_mask, "citation"].unique()
@@ -200,32 +198,34 @@ def filter_non_judicial_nominations(
 def filter_dash_zero_citations(frame_with_citations: pd.DataFrame) -> pd.DataFrame:
     """
     Filter out rows where the 'citation' value ends with '-0'.
-    
+
     These records typically lack critical information (nomination dates, confirmation dates),
     helpful information (person's name), or are not for judicial positions.
-    
+
     Args:
         frame_with_citations: DataFrame containing records with 'citation' column
-        
+
     Returns:
         DataFrame with filtered rows
     """
     # Make a copy to avoid SettingWithCopyWarning
     df_copy = frame_with_citations.copy()
-    
+
     # Find citations ending with '-0'
     dash_zero_mask = df_copy["citation"].str.endswith("-0", na=False)
-    
+
     # Count and log what we're removing
     dash_zero_count = dash_zero_mask.sum()
     logger.info(f"Found {dash_zero_count} citations ending with '-0'")
-    
+
     # Filter out the problematic records
     filtered_df = df_copy[~dash_zero_mask]
-    
+
     # Log the results
-    logger.info(f"Removed {len(df_copy) - len(filtered_df)}/{len(df_copy)} records with '-0' citations")
-    
+    logger.info(
+        f"Removed {len(df_copy) - len(filtered_df)}/{len(df_copy)} records with '-0' citations"
+    )
+
     return filtered_df
 
 
@@ -394,8 +394,6 @@ def _flatten_json_recursive(
         flat_dict[prefix] = obj
 
 
-
-
 def clean_name(name: str) -> str:
     """
     Clean and normalize a name string.
@@ -412,6 +410,7 @@ def clean_name(name: str) -> str:
     name = re.sub(r"[\.,]", "", name)  # drop punctuation
     name = re.sub(r"\s+", " ", name).strip()
     return name
+
 
 def create_full_name_from_parts(
     first_name: Optional[str] = None,
@@ -455,7 +454,7 @@ def create_full_name_from_parts(
 def extract_court_from_description(description: str) -> str:
     """
     DEPRECATED: this function was trying to do too much all at once, and has been replaced by multiple smaller functions.
-    
+
     Extract court information from nomination description.
 
     Format typically follows: "Full name, of the US_state, to be a/an position_title
@@ -492,7 +491,6 @@ def extract_court_from_description(description: str) -> str:
         return match.group(0).strip()
 
     return ""
-
 
 
 def merge_nominees_onto_nominations(
@@ -584,7 +582,7 @@ def convert_judge_name_format_from_last_comma_first_to_first_then_last(judge_nam
     """
     Convert judge name from "lastname, firstname middlename (suffix)" format
     to "firstname middlename lastname suffix" format using the nameparser library.
-    
+
     This handles various edge cases including multiple commas, suffixes, titles, etc.
 
     Args:
@@ -595,25 +593,20 @@ def convert_judge_name_format_from_last_comma_first_to_first_then_last(judge_nam
     """
     if not isinstance(judge_name, str) or not judge_name.strip():
         return ""
-    
+
     # Parse the name using nameparser's HumanName
     parsed_name = HumanName(judge_name)
-    
+
     # Combine the components in the desired order
-    components = [
-        parsed_name.first,
-        parsed_name.middle,
-        parsed_name.last,
-        parsed_name.suffix
-    ]
-    
+    components = [parsed_name.first, parsed_name.middle, parsed_name.last, parsed_name.suffix]
+
     # Join the non-empty components with spaces
     result = " ".join(filter(None, components))
-    
+
     # If parsing failed completely, return original string
     if not result.strip() and judge_name.strip():
         return judge_name.strip()
-    
+
     return result
 
 
@@ -716,7 +709,7 @@ def link_unconfirmed_nominations(
     • Select Congress rows with missing NID **and** not confirmed.
     • Exact-name match (last → first → MI) against FJC 'other nominations'.
     • Fill the NID back into congress_df.  Returns an updated copy.
-    
+
     Prerequisites:
     • cong_df must have a "nid" column
     • cong_df must have a "latestaction_text" column
@@ -734,10 +727,11 @@ def link_unconfirmed_nominations(
 
     # Name match (reuse existing function)
     matches = perform_exact_name_matching(
-        cong_unc, fjc_other_df,
+        cong_unc,
+        fjc_other_df,
         congress_name_col=cong_name_col,
         fjc_name_col="judge_name",
-        nid_col="nid"
+        nid_col="nid",
     )
 
     # Check if there were any matches found
@@ -746,8 +740,7 @@ def link_unconfirmed_nominations(
         return cong_df  # Return original dataframe unchanged
 
     # Keep only unambiguous matches
-    nid_map = (matches[~matches["ambiguous"]]
-               .set_index("congress_index")["nid"])
+    nid_map = matches[~matches["ambiguous"]].set_index("congress_index")["nid"]
 
     # Fill back into the original dataframe
     cong_df = cong_df.copy()
@@ -755,9 +748,7 @@ def link_unconfirmed_nominations(
 
     # 5Attach failure reason text for analysis
     if "fjc_nom_failure_reason" in fjc_other_df.columns:
-        reason_map = (
-            fjc_other_df.set_index("nid")["other_nom_failure_reason"]
-        )
+        reason_map = fjc_other_df.set_index("nid")["other_nom_failure_reason"]
         cong_df["failure_reason"] = cong_df["nid"].map(reason_map)
 
     logger.success(f"Filled {nid_map.notna().sum()} additional NIDs from FJC other-nominations.")
@@ -767,23 +758,90 @@ def link_unconfirmed_nominations(
 def drop_unhelpfully_uninformative_columns(df_to_clean: pd.DataFrame) -> pd.DataFrame:
     """
     Drop columns from *df_to_clean* that are unhelpfully uninformative.
+    
+    This function identifies and removes columns with uninformative conditions such as any of:
+    - has only one unique value, and all rows are fully populated with that one unique value (no missing values).
+    - is a column of all missing values
+    - is a column of all empty strings (a specific niche case which should already be getting caught by the "has only one unique value, and is fully populated with that one unique value)
+    
+    Note that a mix of empty strings and missing values is NOT one of the causes for this function to delete the column (because maybe the empty strings are an indicator of something important, even if empty!)
     """
-    # Before: Show what columns we might delete
     print("Columns with limited unique values:")
-    for col in sorted(df_to_clean.columns):
-        if df_to_clean[col].nunique() < 2 and df_to_clean[col].notna().all():
-            print(f"  - {col}: {df_to_clean[col].nunique()} unique value(s), 100% populated with '{df_to_clean[col].iloc[0]}'")
-        elif df_to_clean[col].nunique() == 1 and df_to_clean[col].isna().any():
-            non_null_pct = df_to_clean[col].notna().mean() * 100
-            print(f"  - {col}: 1 unique non-null value '{df_to_clean[col].dropna().iloc[0]}' ({non_null_pct:.1f}% of rows) - KEEPING")
-
-    # Drop only columns that are fully populated with the same value
-    dropped_cols = []
-    for col in sorted(df_to_clean.columns):
-        if df_to_clean[col].nunique() < 2 and df_to_clean[col].notna().all():
-            print(f"Dropping from {df_to_clean} - {col}: has {df_to_clean[col].nunique()} unique value(s) and 0 missing values")
-            df_to_clean.drop(col, inplace=True, axis=1)
-            dropped_cols.append(col)
-
-    print(f"\nDropped {len(dropped_cols)} columns that were fully populated with the same value")
-    return df_to_clean
+    
+    # Create a copy of the input dataframe to avoid modifying it
+    result_df = df_to_clean.copy()
+    columns_to_drop = []
+    
+    # Process each column individually with maximum safety
+    for col in sorted(result_df.columns):
+        try:
+            # Get statistics about the column with maximum safety
+            unique_count_obj = result_df[col].nunique()
+            unique_count = unique_count_obj.item() if hasattr(unique_count_obj, "item") else int(unique_count_obj)
+            
+            null_sum_obj = result_df[col].isnull().sum()
+            null_count = null_sum_obj.item() if hasattr(null_sum_obj, "item") else int(null_sum_obj)
+            
+            total_rows = len(result_df)
+            
+            # Calculate percentage of non-null values
+            non_null_count = total_rows - null_count
+            non_null_pct = 100.0 * non_null_count / total_rows if total_rows > 0 else 0
+            
+            # Check for all missing values condition
+            if null_count == total_rows:
+                print(f"  - {col}: 100% missing values - DROPPING")
+                columns_to_drop.append(col)
+                continue
+                
+            # Check for single value condition
+            if unique_count == 1:
+                # Get sample value for reporting
+                try:
+                    sample_val = result_df[col].dropna().iloc[0]
+                    if hasattr(sample_val, "item"):
+                        sample_val = sample_val.item()
+                    sample_val_str = str(sample_val)
+                    
+                    # Check if fully populated (100%)
+                    if non_null_count == total_rows:
+                        print(f"  - {col}: 1 unique value, 100% populated with '{sample_val_str}' - DROPPING")
+                        columns_to_drop.append(col)
+                    else:
+                        # Partially populated, report but keep
+                        print(f"  - {col}: 1 unique non-null value '{sample_val_str}' ({non_null_pct:.1f}% of rows) - KEEPING")
+                except Exception as e:
+                    # Handle edge cases where we can't get a sample value
+                    if non_null_count == total_rows:
+                        print(f"  - {col}: 1 unique value, 100% populated - DROPPING")
+                        columns_to_drop.append(col)
+                    else:
+                        print(f"  - {col}: 1 unique non-null value (partially populated) - KEEPING")
+            
+            # Check for all empty strings
+            elif unique_count == 1 and non_null_count > 0:
+                try:
+                    sample_val = result_df[col].dropna().iloc[0]
+                    if hasattr(sample_val, "item"):
+                        sample_val = sample_val.item()
+                    
+                    # Check if the single value is an empty string
+                    if isinstance(sample_val, str) and sample_val.strip() == "":
+                        print(f"  - {col}: All non-null values are empty strings ({non_null_pct:.1f}% of rows) - DROPPING")
+                        columns_to_drop.append(col)
+                except Exception:
+                    pass  # If we can't check for empty strings, just move on
+                    
+        except Exception as e:
+            print(f"Error analyzing column '{col}': {str(e)}")
+    
+    # Now drop all identified columns at once
+    if columns_to_drop:
+        result_df = result_df.drop(columns=columns_to_drop)
+        for col in columns_to_drop:
+            print(f"Dropped column: {col}")
+        print(f"\nDropped {len(columns_to_drop)} columns that were uninformative")
+    else:
+        print("\nNo columns were identified for dropping")
+    
+    return result_df
