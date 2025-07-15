@@ -14,7 +14,7 @@ def _extract_service_indices(cols: List[str]) -> List[str]:
     return sorted({m.group(1) for c in cols if (m := pat.match(c))})
 
 
-def add_federal_service_features(
+def compress_federal_service_features(
     df: pd.DataFrame,
     received_col: str = "receiveddate",
     drop_original: bool = False,
