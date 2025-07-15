@@ -28,6 +28,7 @@
       "pathlib",
       "rapidfuzz",
       "receiveddate",
-      "urlparse"
+      "urlparse",
+      "whitegrid"
     ],
 }

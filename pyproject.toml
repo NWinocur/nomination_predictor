@@ -21,6 +21,7 @@ dependencies = [
     "loguru",
     "matplotlib",
     "mkdocs",
+    "missingno",
     "nameparser",
     "notebook",
     "numpy",
