@@ -758,42 +758,48 @@ def link_unconfirmed_nominations(
 def drop_unhelpfully_uninformative_columns(df_to_clean: pd.DataFrame) -> pd.DataFrame:
     """
     Drop columns from *df_to_clean* that are unhelpfully uninformative.
-    
+
     This function identifies and removes columns with uninformative conditions such as any of:
     - has only one unique value, and all rows are fully populated with that one unique value (no missing values).
     - is a column of all missing values
     - is a column of all empty strings (a specific niche case which should already be getting caught by the "has only one unique value, and is fully populated with that one unique value)
-    
+
     Note that a mix of empty strings and missing values is NOT one of the causes for this function to delete the column (because maybe the empty strings are an indicator of something important, even if empty!)
     """
     print("Columns with limited unique values:")
-    
+
     # Create a copy of the input dataframe to avoid modifying it
     result_df = df_to_clean.copy()
     columns_to_drop = []
-    
+
     # Process each column individually with maximum safety
     for col in sorted(result_df.columns):
         try:
             # Get statistics about the column with maximum safety
             unique_count_obj = result_df[col].nunique()
-            unique_count = unique_count_obj.item() if hasattr(unique_count_obj, "item") else int(unique_count_obj)
-            
+            unique_count = (
+                unique_count_obj.item()
+                if hasattr(unique_count_obj, "item")
+                else int(unique_count_obj)
+            )
+
             null_sum_obj = result_df[col].isnull().sum()
-            null_count = null_sum_obj.item() if hasattr(null_sum_obj, "item") else int(null_sum_obj)
-            
+            null_count = (
+                null_sum_obj.item() if hasattr(null_sum_obj, "item") else int(null_sum_obj)
+            )
+
             total_rows = len(result_df)
-            
+
             # Calculate percentage of non-null values
             non_null_count = total_rows - null_count
             non_null_pct = 100.0 * non_null_count / total_rows if total_rows > 0 else 0
-            
+
             # Check for all missing values condition
             if null_count == total_rows:
                 print(f"  - {col}: 100% missing values - DROPPING")
                 columns_to_drop.append(col)
                 continue
-                
+
             # Check for single value condition
             if unique_count == 1:
                 # Get sample value for reporting
@@ -802,39 +808,47 @@ def drop_unhelpfully_uninformative_columns(df_to_clean: pd.DataFrame) -> pd.Data
                     if hasattr(sample_val, "item"):
                         sample_val = sample_val.item()
                     sample_val_str = str(sample_val)
-                    
+
                     # Check if fully populated (100%)
                     if non_null_count == total_rows:
-                        print(f"  - {col}: 1 unique value, 100% populated with '{sample_val_str}' - DROPPING")
+                        print(
+                            f"  - {col}: 1 unique value, 100% populated with '{sample_val_str}' - DROPPING"
+                        )
                         columns_to_drop.append(col)
                     else:
                         # Partially populated, report but keep
-                        print(f"  - {col}: 1 unique non-null value '{sample_val_str}' ({non_null_pct:.1f}% of rows) - KEEPING")
+                        print(
+                            f"  - {col}: 1 unique non-null value '{sample_val_str}' ({non_null_pct:.1f}% of rows) - KEEPING"
+                        )
                 except Exception as e:
                     # Handle edge cases where we can't get a sample value
                     if non_null_count == total_rows:
                         print(f"  - {col}: 1 unique value, 100% populated - DROPPING")
                         columns_to_drop.append(col)
                     else:
-                        print(f"  - {col}: 1 unique non-null value (partially populated) - KEEPING")
-            
+                        print(
+                            f"  - {col}: 1 unique non-null value (partially populated) - KEEPING"
+                        )
+
             # Check for all empty strings
             elif unique_count == 1 and non_null_count > 0:
                 try:
                     sample_val = result_df[col].dropna().iloc[0]
                     if hasattr(sample_val, "item"):
                         sample_val = sample_val.item()
-                    
+
                     # Check if the single value is an empty string
                     if isinstance(sample_val, str) and sample_val.strip() == "":
-                        print(f"  - {col}: All non-null values are empty strings ({non_null_pct:.1f}% of rows) - DROPPING")
+                        print(
+                            f"  - {col}: All non-null values are empty strings ({non_null_pct:.1f}% of rows) - DROPPING"
+                        )
                         columns_to_drop.append(col)
                 except Exception:
                     pass  # If we can't check for empty strings, just move on
-                    
+
         except Exception as e:
             print(f"Error analyzing column '{col}': {str(e)}")
-    
+
     # Now drop all identified columns at once
     if columns_to_drop:
         result_df = result_df.drop(columns=columns_to_drop)
@@ -843,38 +857,53 @@ def drop_unhelpfully_uninformative_columns(df_to_clean: pd.DataFrame) -> pd.Data
         print(f"\nDropped {len(columns_to_drop)} columns that were uninformative")
     else:
         print("\nNo columns were identified for dropping")
-    
+
     return result_df
 
 
-
-def categorically_bin(df, source_column_name:str, destination_column_name:str,
-                      keep_proportion:float=0.80):
+def categorically_bin(
+    df: pd.DataFrame,
+    source_col: str,
+    dest_col: str,
+    *,
+    keep_proportion: float = 0.80,
+    other_label: str = "other",
+) -> pd.DataFrame:
     """
-    Bin the least-frequent ~20% of `source_column_name` values into 'other'.
+    Collapse the infrequent categories of *source_col* into *other_label*.
 
-    Parameters
-    ----------
-    df         : DataFrame (will be modified in-place; returns df for chaining)
-    source_column_name : existing column with school names
-    destination_column_name    : name of column to create
-    keep_proportion  : proportion of rows to keep as individual categories
-                 (0.80 → keep top 80%, bin bottom 20%)
-
+    • Frequencies are computed **ignoring NaN**.
+    • Keep the fewest top categories whose cumulative share ≥ keep_proportion.
+    • All remaining non‑NaN categories → *other_label*.
+    • Original NaNs remain NaN in the new column.
+    • Returns the same DataFrame (modified in‑place) for chaining.
     """
-    # frequency table
-    counts = df[source_column_name].value_counts(dropna=False)
+    # 1. frequency table (exclude NaN)
+    counts = df[source_col].value_counts(dropna=True)
+    if counts.empty:                     # column entirely NaN
+        df[dest_col] = pd.NA
+        df[dest_col] = df[dest_col].astype("category")
+        return df
 
-    # cumulative share of rows if sorted by descending frequency
-    cumulative_share = counts.cumsum() / len(df)
+    # 2. cumulative share
+    cumulative = counts.cumsum() / counts.sum()
 
-    # items that keep their own category
-    keep_items = cumulative_share[cumulative_share <= keep_proportion].index
+    keep_items = cumulative[cumulative <= keep_proportion].index.tolist()
+    # always include the first category that crosses the threshold
+    if not keep_items:
+        keep_items = [counts.index[0]]
+    else:
+        last = len(keep_items) - 1
+        if cumulative.iloc[last] < keep_proportion and last + 1 < len(cumulative):
+            keep_items.append(cumulative.index[last + 1])
 
-    # assign
-    df[destination_column_name] = df[source_column_name].where(df[source_column_name].isin(keep_items), "other")
+    keep_items = set(keep_items)
 
-    # optional: cast to pandas Categorical for memory / model encoding
-    #df[destination_column_name] = df[destination_column_name].astype("category")
+    # 3. assign
+    result = df[source_col].where(df[source_col].isin(keep_items), other_label)
 
+    # 4. preserve NaN for missing rows
+    result = result.where(df[source_col].notna(), pd.NA)
+
+    df[dest_col] = result.astype("category")
     return df
