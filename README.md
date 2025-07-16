@@ -123,9 +123,16 @@ make format
 
 ## Retrieving data
 
-If you don't already have your CONGRESS_API_KEY environment variable assigned via .env file, you will need to do so before running `make data`.
+The eventual intent would be to simplify the mess of code in `dataset.py` until you can simply call
 
-#### Example .env file
+```bash
+make data
+```
+...but until then Notebook 0 is the best way to get the data.
+
+Either way, you'll need an API key.
+
+If you don't already have your CONGRESS_API_KEY environment variable assigned via .env file, you will need to do so by adding a line like the following to your .env file:
 
 ```.env
 CONGRESS_API_KEY="your-congress-api-key-here"
