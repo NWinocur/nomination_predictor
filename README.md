@@ -32,7 +32,7 @@ Notebook 3 shall:
 3. Evaluate trained model or models to select which to use in subsequent steps
 4. Save the trained model to `models/`.
 
-Notebook 4 shall:
+Notebook 4 (_not yet implemented as of typing this_) shall:
 
 1. Load the model that Notebook 3 had saved to `models/`.
 2. Be a proof-of-concept space for a follow-up script to build a Streamlit webapp with which users can obtain estimates given their inputs (e.g. the type of vacancy, the court, the circuit, etc.) for an existing or hypothetical vacancy. This webapp shall make calls to `predict.py` which performs inference using the trained model.
@@ -102,19 +102,24 @@ A future expansion of this project can expand on the web scraping capabilities t
 
 ## Tests
 
-`make test`
+```bash
+make test
+```
 
 ## Set up Python environment
 
-`
-pip install virtualenvwrapper # if you haven't already
+```bash
+pip install virtualenvwrapper
 make create_environment
-make requirements`
+make requirements
+```
 
 ## Run ruff (code formatter) for linting or reformatting
 
-`make lint
-make format`
+```bash
+make lint
+make format
+```
 
 ## Retrieving data
 
@@ -122,10 +127,9 @@ If you don't already have your CONGRESS_API_KEY environment variable assigned vi
 
 #### Example .env file
 
-`
+```.env
 CONGRESS_API_KEY="your-congress-api-key-here"
-`
-
+```
 
 ## Project Structure
 
@@ -160,9 +164,9 @@ See [references/data_dictionary.md](references/data_dictionary.md) for a detaile
 
 This project borrows from <https://cookiecutter-data-science.drivendata.org/using-the-template/> a consistent naming pattern for Jupyter notebooks to maintain organization and clarity:
 
-```
+`
 <PHASE>.<SEQUENCE>-<INITIALS>-<DESCRIPTION>.ipynb
-```
+`
 
 - **PHASE**: Number indicating the development phase
   - `0` - Data exploration - often just for exploratory work
