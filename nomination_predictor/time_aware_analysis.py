@@ -22,6 +22,7 @@ def merge_latest_education(
 ) -> pd.DataFrame:
     """
     For each nomination pick *one* education row (latest degree_year ≤ receiveddate).
+    
     Adds: degree, school, degree_year, education_sequence  (all from that row).
     """
     _ensure_datetime(cong_df, "receiveddate")
@@ -41,7 +42,13 @@ def merge_latest_education(
     best = best.rename(columns={"sequence": "education_sequence"})[
         ["nid", "receiveddate", "degree", "school", "degree_year", "education_sequence"]
     ]
-
+    # if on any row being newly-added we only have partial info, log a warning
+    if best["education_sequence"].isna().any():
+        logger.warning("Some rows have partial education information")
+        # indicate which are missing
+        missing = best[best["education_sequence"].isna()]
+        logger.warning(f"{missing=}")
+    
     # left‑join back
     out = cong_df.merge(best, on=["nid", "receiveddate"], how="left")
     return out

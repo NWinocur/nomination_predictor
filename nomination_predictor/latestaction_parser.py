@@ -66,8 +66,7 @@ def _classify_action(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-def enrich_latest_action(df: pd.DataFrame,
-                         col: str = "latestaction_text") -> pd.DataFrame:
+def enrich_latest_action(df: pd.DataFrame, col: str = "latestaction_text") -> pd.DataFrame:
     """
     Add columns:
       • latest_action_taken   (confirmed / returned / withdrawn / other)
@@ -79,10 +78,27 @@ def enrich_latest_action(df: pd.DataFrame,
 
     The function operates on a *copy* and returns it.
     """
+    # Input validation
+    if df is None:
+        raise ValueError("DataFrame parameter 'df' cannot be None")
+    
+    if col not in df.columns:
+        raise ValueError(f"Column '{col}' not found in DataFrame. Available columns: {list(df.columns)}")
+    
     yea, nay, rno, voice, unanimity = [], [], [], [], []
     action_labels = []
 
     for txt in df[col]:
+        # Handle None or NaN values in the column
+        if pd.isna(txt):
+            action_labels.append(None)
+            yea.append(None)
+            nay.append(None)
+            rno.append(None)
+            voice.append(False)
+            unanimity.append(False)
+            continue
+            
         action_labels.append(_classify_action(txt))
         y, n, rv, vv, un = _parse_vote(txt)
         yea.append(y)

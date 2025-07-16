@@ -845,3 +845,36 @@ def drop_unhelpfully_uninformative_columns(df_to_clean: pd.DataFrame) -> pd.Data
         print("\nNo columns were identified for dropping")
     
     return result_df
+
+
+
+def categorically_bin(df, source_column_name:str, destination_column_name:str,
+                      keep_proportion:float=0.80):
+    """
+    Bin the least-frequent ~20% of `source_column_name` values into 'other'.
+
+    Parameters
+    ----------
+    df         : DataFrame (will be modified in-place; returns df for chaining)
+    source_column_name : existing column with school names
+    destination_column_name    : name of column to create
+    keep_proportion  : proportion of rows to keep as individual categories
+                 (0.80 → keep top 80%, bin bottom 20%)
+
+    """
+    # frequency table
+    counts = df[source_column_name].value_counts(dropna=False)
+
+    # cumulative share of rows if sorted by descending frequency
+    cumulative_share = counts.cumsum() / len(df)
+
+    # items that keep their own category
+    keep_items = cumulative_share[cumulative_share <= keep_proportion].index
+
+    # assign
+    df[destination_column_name] = df[source_column_name].where(df[source_column_name].isin(keep_items), "other")
+
+    # optional: cast to pandas Categorical for memory / model encoding
+    #df[destination_column_name] = df[destination_column_name].astype("category")
+
+    return df
