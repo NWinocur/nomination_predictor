@@ -1,3 +1,5 @@
+"""As of typing this, this file does not work as originally intended and should not be used."""
+
 import re
 from typing import List, Tuple
 

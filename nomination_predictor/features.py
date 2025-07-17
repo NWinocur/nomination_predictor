@@ -13,14 +13,14 @@ Given a nomination is on record as having occurred on a specified date, when fil
 import ast
 import json
 import re
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from loguru import logger
 from nameparser import HumanName
 import pandas as pd
-from tqdm import tqdm
 
 from nomination_predictor.name_matching import perform_exact_name_matching
+from nomination_predictor.nomination_description_parser import parse_descriptions_to_columns
 
 
 def normalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -451,48 +451,6 @@ def create_full_name_from_parts(
     return full_name
 
 
-def extract_court_from_description(description: str) -> str:
-    """
-    DEPRECATED: this function was trying to do too much all at once, and has been replaced by multiple smaller functions.
-
-    Extract court information from nomination description.
-
-    Format typically follows: "Full name, of the US_state, to be a/an position_title
-    for/of the court_name, (for a/an optional term limit), vice predecessor_name, reason."
-
-    Args:
-        description: The nomination description text
-
-    Returns:
-        Extracted court name or empty string if not found
-    """
-    if pd.isna(description):
-        return ""
-
-    # Common patterns for court names in descriptions
-    court_patterns = [
-        r"to be (?:a |an )?(?:United States |U\.S\. )?(?:District |Circuit |Chief )?Judge for the (.*?(?:District|Circuit).*?)(?:,|\.|\s+for a| vice)",
-        r"to be (?:a |an )?(?:United States |U\.S\. )?(?:District |Circuit |Chief )?Judge of the (.*?(?:District|Circuit).*?)(?:,|\.|\s+for a| vice)",
-        r"to be (?:a |an )?(?:Judge|Justice) of the (.*?Court.*?)(?:,|\.|\s+for a| vice)",
-        r"to be (?:a |an )?(?:Associate|Chief) (?:Judge|Justice) of the (.*?Court.*?)(?:,|\.|\s+for a| vice)",
-    ]
-
-    # Try each pattern
-    for pattern in court_patterns:
-        match = re.search(pattern, description)
-        if match:
-            return match.group(1).strip()
-
-    # Fallback - look for any court reference
-    match = re.search(
-        r"(?:District|Circuit|Court|Tribunal) (?:of|for) (?:the )?([A-Za-z\s]+)", description
-    )
-    if match:
-        return match.group(0).strip()
-
-    return ""
-
-
 def merge_nominees_onto_nominations(
     nominations_df: pd.DataFrame, nominees_df: pd.DataFrame
 ) -> pd.DataFrame:
@@ -673,29 +631,14 @@ def extract_name_and_location_columns(
         logger.error(f"Column '{description_column}' not found in DataFrame")
         return df
 
-    # Create a copy to avoid SettingWithCopyWarning
-    result_df = df.copy()
-
-    # Apply extraction function to each description
-    extracted_data = result_df[description_column].apply(
-        extract_name_and_location_from_description
-    )
-
-    # Split the returned tuples into separate columns
-    result_df["full_name_from_description"] = extracted_data.apply(lambda x: x[0])
-    result_df["location_of_origin_from_description"] = extracted_data.apply(lambda x: x[1])
-
-    # Log extraction statistics
-    name_count = result_df["full_name_from_description"].notna().sum()
-    location_count = result_df["location_of_origin_from_description"].notna().sum()
-    total_rows = len(result_df)
-
-    logger.info(
-        f"Extracted {name_count}/{total_rows} ({name_count / total_rows:.1%}) names and "
-        f"{location_count}/{total_rows} ({location_count / total_rows:.1%}) locations"
-    )
-
-    return result_df
+    df_with_parsed = parse_descriptions_to_columns(df)
+    
+    # For backward compatibility, create the old column names as aliases
+    # This ensures existing downstream code continues to work
+    df_with_parsed['full_name_from_description'] = df_with_parsed['nominee_name']
+    df_with_parsed['location_of_origin_from_description'] = df_with_parsed['location']
+    
+    return df_with_parsed
 
 
 def link_unconfirmed_nominations(
@@ -820,7 +763,7 @@ def drop_unhelpfully_uninformative_columns(df_to_clean: pd.DataFrame) -> pd.Data
                         print(
                             f"  - {col}: 1 unique non-null value '{sample_val_str}' ({non_null_pct:.1f}% of rows) - KEEPING"
                         )
-                except Exception as e:
+                except Exception:
                     # Handle edge cases where we can't get a sample value
                     if non_null_count == total_rows:
                         print(f"  - {col}: 1 unique value, 100% populated - DROPPING")
