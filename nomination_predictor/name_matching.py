@@ -100,7 +100,7 @@ def split_names(df: pd.DataFrame, name_col: str) -> pd.DataFrame:
 def perform_exact_name_matching(
     congress_df: pd.DataFrame,
     fjc_df: pd.DataFrame,
-    congress_name_col: str = "full_name_from_description",
+    congress_name_col: str = "nominee_name",
     fjc_name_col: str = "judge_name",
     nid_col: str = "nid",
 ) -> pd.DataFrame:

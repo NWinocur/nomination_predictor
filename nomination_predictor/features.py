@@ -20,7 +20,6 @@ from nameparser import HumanName
 import pandas as pd
 
 from nomination_predictor.name_matching import perform_exact_name_matching
-from nomination_predictor.nomination_description_parser import parse_descriptions_to_columns
 
 
 def normalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -146,19 +145,20 @@ def merge_nominees_with_nominations(
     return merged
 
 
-def filter_non_judicial_nominations(frame_with_position_titles: pd.DataFrame) -> pd.DataFrame:
+def filter_non_judicial_nominations(frame_with_description: pd.DataFrame) -> pd.DataFrame:
     """
     Filter out non-judicial nominations based on position titles.
 
     Args:
-        frame_with_position_titles: DataFrame containing nomination records with 'nominees_0_positiontitle' and 'citation" and 'description' columns
+        frame_with_description: DataFrame containing nomination records with 'nominees_0_positiontitle' and 'citation" and 'description' columns
 
 
     Returns:
         Tuple of (filtered_nominations_df, filtered_nominees_df)
     """
     non_judicial_titles = [
-        "Ambassador,Attorney",
+        "Ambassador",
+        "Attorney",
         "Board",
         "Commission",
         "Director",
@@ -170,22 +170,19 @@ def filter_non_judicial_nominations(frame_with_position_titles: pd.DataFrame) ->
     ]
 
     # Make copies to avoid SettingWithCopyWarning
-    df_copy = frame_with_position_titles.copy()
+    df_copy = frame_with_description.copy()
 
-    # Find citations of rows with non-judicial titles in either "nominees_0_positiontitle" or "description"
-    non_judicial_mask = df_copy["nominees_0_positiontitle"].str.contains(
+    # Find indices of rows with non-judicial titles in "description"
+    non_judicial_mask = df_copy["description"].str.contains(
         "|".join(non_judicial_titles), na=False
     )
-    non_judicial_mask = non_judicial_mask | df_copy["description"].str.contains(
-        "|".join(non_judicial_titles), na=False
-    )
-    citations_to_drop = df_copy.loc[non_judicial_mask, "citation"].unique()
+    non_judicial_indices = df_copy.loc[non_judicial_mask].index
 
     # Log the number of non-judicial nominations being removed
-    logger.info(f"Found {len(citations_to_drop)} unique citations with non-judicial titles")
+    logger.info(f"Found {len(non_judicial_indices)} rows with non-judicial titles")
 
     # Filter out the non-judicial nominations
-    filtered_nominations = df_copy[~df_copy["citation"].isin(citations_to_drop)]
+    filtered_nominations = df_copy.drop(non_judicial_indices)
 
     # Log the results
     logger.info(
@@ -566,79 +563,6 @@ def convert_judge_name_format_from_last_comma_first_to_first_then_last(judge_nam
         return judge_name.strip()
 
     return result
-
-
-def extract_name_and_location_from_description(description: str) -> tuple[str, str]:
-    """
-    Extracts full name and location of origin from nomination description strings.
-
-    The function parses description strings like:
-    "melissa damian, of florida, to be ..."
-    "nicole g. bernerr of maryland, to be united..."
-    "sherri malloy beatty-arthur, of the district of columbia, for..."
-
-    Args:
-        description: A nomination description string
-
-    Returns:
-        Tuple of (full_name, location_of_origin)
-        - full_name: The nominee's name (e.g., "melissa damian")
-        - location_of_origin: The nominee's location (e.g., "florida")
-    """
-    if not isinstance(description, str) or not description.strip():
-        return "", ""
-
-    description = description.strip()
-
-    # Pattern 1: "name, of location, to be/for..."
-    pattern1 = r"^(.+?),\s+of\s+(.+?)(?:,\s+to\s+be|,\s+for|$)"
-
-    # Pattern 2: "name, of the location, to be/for..."
-    pattern2 = r"^(.+?),\s+of\s+the\s+(.+?)(?:,\s+to\s+be|,\s+for|$)"
-
-    # Pattern 3: "name of location, to be/for..."
-    pattern3 = r"^(.+?)\s+of\s+(.+?)(?:,\s+to\s+be|,\s+for|$)"
-
-    # Try patterns in sequence
-    for pattern in [pattern1, pattern2, pattern3]:
-        match = re.search(pattern, description)
-        if match:
-            full_name = match.group(1).strip()
-            location = match.group(2).strip().strip("the ")
-            return full_name, location
-
-    # If no match found, return empty strings
-    logger.warning(f"Could not extract name and location from description: {description}")
-    return "", ""
-
-
-def extract_name_and_location_columns(
-    df: pd.DataFrame, description_column: str = "description"
-) -> pd.DataFrame:
-    """
-    Creates 'full_name_from_description' and 'location_of_origin_from_description'
-    columns in the provided DataFrame by extracting from the description column.
-
-    Args:
-        df: DataFrame containing nomination descriptions
-        description_column: Name of the column containing descriptions (default: "description")
-
-    Returns:
-        DataFrame with two new columns added: 'full_name_from_description' and
-        'location_of_origin_from_description'
-    """
-    if description_column not in df.columns:
-        logger.error(f"Column '{description_column}' not found in DataFrame")
-        return df
-
-    df_with_parsed = parse_descriptions_to_columns(df)
-    
-    # For backward compatibility, create the old column names as aliases
-    # This ensures existing downstream code continues to work
-    df_with_parsed['full_name_from_description'] = df_with_parsed['nominee_name']
-    df_with_parsed['location_of_origin_from_description'] = df_with_parsed['location']
-    
-    return df_with_parsed
 
 
 def link_unconfirmed_nominations(
