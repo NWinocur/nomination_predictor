@@ -580,7 +580,7 @@ def link_unconfirmed_nominations(
     cong_df: pd.DataFrame,
     fjc_other_df: pd.DataFrame,
     latest_text_col: str = "latestaction_text",
-    cong_name_col: str = "full_name_from_description",
+    cong_name_col: str = "nominee_name",
 ) -> pd.DataFrame:
     """
     Link un-confirmed Congress rows to FJC other-nominations:
