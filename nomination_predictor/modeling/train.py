@@ -1,17 +1,165 @@
 """This file shall contain code to train a model."""
 
-from collections import Counter
-from datetime import datetime
 import itertools
 import os
-from pathlib import Path
 import pickle
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional, Union
 
 from loguru import logger
+from sklearn.base import BaseEstimator
+from sklearn.pipeline import Pipeline
 from tqdm import tqdm
 import typer
 
 from nomination_predictor.config import MODELS_DIR, PROCESSED_DATA_DIR
+
+
+def save_model_with_metadata(
+    model: Union[BaseEstimator, Pipeline],
+    model_name: str,
+    feature_columns: list,
+    training_data_info: Optional[Dict[str, Any]] = None,
+    hyperparameters: Optional[Dict[str, Any]] = None,
+    performance_metrics: Optional[Dict[str, Any]] = None,
+    custom_metadata: Optional[Dict[str, Any]] = None,
+) -> Path:
+    """
+    Save a trained model with comprehensive metadata in a standardized format.
+    
+    This function ensures all models (tuned or untuned) are saved consistently
+    for easy loading by the webapp and other components.
+    
+    Args:
+        model: The trained model (sklearn Pipeline or estimator)
+        model_name: Base name for the model (e.g., "xgboost_regression")
+        feature_columns: List of feature column names used for training
+        training_data_info: Dict with info about training data (shape, target, etc.)
+        hyperparameters: Dict of model hyperparameters used
+        performance_metrics: Dict of model performance metrics (RMSE, R2, etc.)
+        custom_metadata: Any additional metadata to include
+        
+    Returns:
+        Path to the saved model file
+        
+    Example:
+        >>> model_path = save_model_with_metadata(
+        ...     model=trained_pipeline,
+        ...     model_name="xgboost_regression",
+        ...     feature_columns=X_train.columns.tolist(),
+        ...     training_data_info={
+        ...         "n_samples": len(X_train),
+        ...         "n_features": len(X_train.columns),
+        ...         "target_column": "days_nom_to_conf"
+        ...     },
+        ...     performance_metrics={
+        ...         "train_rmse": 45.2,
+        ...         "test_rmse": 48.7,
+        ...         "train_r2": 0.85,
+        ...         "test_r2": 0.82
+        ...     }
+        ... )
+    """
+    # Create sanitized timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    
+    # Create filename
+    filename = f"{model_name}_{timestamp}.pkl"
+    model_path = Path(MODELS_DIR) / filename
+    
+    # Ensure models directory exists
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Prepare comprehensive metadata
+    metadata = {
+        "model_name": model_name,
+        "timestamp": timestamp,
+        "datetime_saved": datetime.now().isoformat(),
+        "model_type": type(model).__name__,
+        "sklearn_version": None,  # Will be filled if available
+        "feature_count": len(feature_columns),
+        "training_data_info": training_data_info or {},
+        "hyperparameters": hyperparameters or {},
+        "performance_metrics": performance_metrics or {},
+        "custom_metadata": custom_metadata or {},
+    }
+    
+    # Try to get sklearn version
+    try:
+        import sklearn
+        metadata["sklearn_version"] = sklearn.__version__
+    except (ImportError, AttributeError):
+        pass
+    
+    # Try to get XGBoost version if it's an XGBoost model
+    try:
+        import xgboost
+        if "xgb" in model_name.lower() or "xgboost" in str(type(model)).lower():
+            metadata["xgboost_version"] = xgboost.__version__
+    except (ImportError, AttributeError):
+        pass
+    
+    # Create the model data structure
+    model_data = {
+        "model": model,
+        "feature_columns": feature_columns,
+        "metadata": metadata,
+    }
+    
+    # Save with context manager for safety
+    try:
+        with open(model_path, "wb") as f:
+            pickle.dump(model_data, f)
+        
+        logger.info(f"Model saved successfully to {model_path}")
+        logger.info(f"Model metadata: {metadata['model_name']} with {metadata['feature_count']} features")
+        
+        return model_path
+        
+    except Exception as e:
+        logger.error(f"Failed to save model to {model_path}: {e}")
+        raise
+
+
+def load_model_with_metadata(model_path: Union[str, Path]) -> Dict[str, Any]:
+    """
+    Load a model saved with save_model_with_metadata().
+    
+    Args:
+        model_path: Path to the saved model file
+        
+    Returns:
+        Dict containing 'model', 'feature_columns', and 'metadata'
+        
+    Example:
+        >>> model_data = load_model_with_metadata("models/xgboost_regression_2025-01-15_143022.pkl")
+        >>> model = model_data["model"]
+        >>> features = model_data["feature_columns"]
+        >>> metadata = model_data["metadata"]
+    """
+    model_path = Path(model_path)
+    
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+    
+    try:
+        with open(model_path, "rb") as f:
+            model_data = pickle.load(f)
+        
+        # Validate structure
+        required_keys = ["model", "feature_columns", "metadata"]
+        if not all(key in model_data for key in required_keys):
+            raise ValueError(f"Model file missing required keys: {required_keys}")
+        
+        logger.info(f"Model loaded successfully from {model_path}")
+        return model_data
+        
+    except Exception as e:
+        logger.error(f"Failed to load model from {model_path}: {e}")
+        raise
+
 
 app = typer.Typer()
 
