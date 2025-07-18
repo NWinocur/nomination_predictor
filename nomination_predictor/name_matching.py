@@ -97,164 +97,312 @@ def split_names(df: pd.DataFrame, name_col: str) -> pd.DataFrame:
     return df
 
 
-def perform_exact_name_matching(
+def match_congress_to_fjc_by_name_and_date(
     congress_df: pd.DataFrame,
-    fjc_df: pd.DataFrame,
+    fjc_judges_df: pd.DataFrame,
+    temporal_window_days: int = 730,  # ±2 years
     congress_name_col: str = "nominee_name",
-    fjc_name_col: str = "judge_name",
+    congress_date_col: str = "receiveddate",
     nid_col: str = "nid",
 ) -> pd.DataFrame:
     """
-    Performs exact string matching between Congress.gov and FJC names using a
-    vectorized pandas merge approach.
-
-    Matching priority: last name -> first name -> middle initial.
-
+    Match Congress nominations to FJC judges using exact name matching + date proximity.
+    
+    Strategy:
+    1. Exact match on (last_name, first_name) between Congress and FJC judges
+    2. For multiple matches, use closest nomination date as disambiguator
+    3. Apply temporal sanity check (reject matches beyond window)
+    4. Return Congress DataFrame with added 'nid' column
+    
     Args:
-        congress_df: DataFrame with Congress.gov nomination data
-        fjc_df: DataFrame with FJC judge data
+        congress_df: DataFrame with Congress nomination data
+        fjc_judges_df: DataFrame with FJC judge biographical data
+        temporal_window_days: Maximum days between Congress and FJC nomination dates
         congress_name_col: Column containing Congress nominee names
-        fjc_name_col: Column containing FJC judge names
+        congress_date_col: Column containing Congress nomination dates
         nid_col: Column containing unique FJC identifier
-
+        
     Returns:
-        DataFrame with Congress records matched to FJC NIDs and match information
+        DataFrame with Congress records and matched NIDs
     """
     logger.info(
-        f"Starting exact name matching with {len(congress_df)} Congress records and {len(fjc_df)} FJC records"
+        f"Starting name+date matching with {len(congress_df)} Congress records and {len(fjc_judges_df)} FJC judges"
     )
 
-    # Step 1: Add first, last, and middle initial columns to both dataframes
+    # Step 1: Parse names in both dataframes
     cong = split_names(congress_df.copy(), congress_name_col)
-    fjc = split_names(fjc_df.copy(), fjc_name_col)
+    fjc = split_names(fjc_judges_df.copy(), "last_name")  # FJC uses different column structure
+    
+    # Handle FJC name structure (last_name, first_name, middle_name columns)
+    fjc["first"] = fjc_judges_df["first_name"].fillna("").apply(normalize_text)
+    fjc["last"] = fjc_judges_df["last_name"].fillna("").apply(normalize_text)
+    fjc["mi"] = fjc_judges_df["middle_name"].fillna("").apply(lambda x: normalize_text(x[:1]) if x else "")
 
     # Ensure we have a unique identifier for congress records
     if "congress_index" not in cong.columns:
         cong["congress_index"] = cong.index
 
-    # Only keep one row per NID in the FJC dataframe to avoid duplicates
-    # from different service records for the same person
-    fjc_unique = fjc[[nid_col, "first", "last", "mi", fjc_name_col]].drop_duplicates(
-        subset=[nid_col]
+    # Step 2: Exact match on last name and first name
+    logger.info("Performing exact name matching on last and first name")
+    name_matches = cong.merge(
+        fjc[["first", "last", "mi", nid_col]], 
+        on=["last", "first"], 
+        how="inner", 
+        suffixes=("", "_fjc")
     )
+    
+    logger.info(f"Found {len(name_matches)} name-based matches")
+    
+    if name_matches.empty:
+        logger.warning("No exact name matches found between Congress and FJC data")
+        # Return original congress_df with empty nid column
+        result = congress_df.copy()
+        result[nid_col] = pd.NA
+        result["match_confidence"] = "no_match"
+        return result
 
-    # Step 2: First-pass join on last name and first name
-    logger.info("Performing first-pass join on last and first name")
-    m1 = cong.merge(
-        fjc_unique, on=["last", "first"], how="left", suffixes=("", "_fjc"), indicator=True
-    )
+    # Step 3: Apply temporal disambiguation for multiple matches
+    logger.info("Applying temporal disambiguation")
+    
+    # Check for ambiguous matches (multiple FJC judges for one Congress record)
+    match_counts = name_matches.groupby("congress_index").size()
+    ambiguous_indices = match_counts[match_counts > 1].index
+    
+    unambiguous_matches = name_matches[~name_matches["congress_index"].isin(ambiguous_indices)].copy()
+    ambiguous_matches = name_matches[name_matches["congress_index"].isin(ambiguous_indices)].copy()
+    
+    logger.info(f"Found {len(unambiguous_matches)} unambiguous matches")
+    logger.info(f"Found {len(ambiguous_matches)} ambiguous matches requiring date disambiguation")
 
-    # DIAGNOSTIC: Check if we found any matches at all
-    found_matches = m1[m1["_merge"] == "both"]
-    logger.info(f"Found {len(found_matches)} total records with last+first name matches")
-
-    if found_matches.empty:
-        # Try last-name-only matches to diagnose data issues
-        logger.info(
-            "NO last+first name matches found. Checking last-name-only matches for diagnosis..."
+    # Step 4: Resolve ambiguous matches using date proximity
+    if not ambiguous_matches.empty:
+        resolved_by_date = _resolve_matches_by_date_proximity(
+            ambiguous_matches, fjc_judges_df, congress_date_col, temporal_window_days, nid_col
         )
-        last_only = cong.merge(fjc_unique, on=["last"], how="inner", suffixes=("", "_fjc"))
-        logger.info(f"Found {len(last_only)} last-name-only matches")
-        if not last_only.empty:
-            logger.info("Showing up to first 10 last-name-only matches:")
-            sample_cols = ["congress_index", congress_name_col, fjc_name_col, nid_col]
-            logger.info(last_only[sample_cols].head(10))
-
-    # Step 3: Check for ambiguity - multiple FJC matches for a single Congress record
-    ambiguity_mask = m1.duplicated(subset=["congress_index"], keep=False) & (
-        m1["_merge"] == "both"
-    )
-
-    # Records that matched exactly one FJC record on last+first name
-    is_unambiguous = m1.loc[~ambiguity_mask & (m1["_merge"] == "both")].copy()
-    is_unambiguous["match_type"] = "first_and_last_name"
-    is_unambiguous["ambiguous"] = False
-
-    # Records that matched multiple FJC records - need further disambiguation
-    pending_ambiguity_determination = m1.loc[ambiguity_mask].copy()
-
-    # Step 4: Second-pass join to try to disambiguate with middle initial
-    logger.info(
-        f"Found {len(pending_ambiguity_determination) // 2} ambiguous matches, attempting middle initial disambiguation"
-    )
-    if not pending_ambiguity_determination.empty:
-        logger.info("Samples of pending ambiguous rows")
-        logger.info(pending_ambiguity_determination.sample(5))
-
-    # Use a full join with middle initial to capture all permutations
-    resolved = pending_ambiguity_determination.merge(
-        fjc_unique, on=["last", "first", "mi"], how="inner", suffixes=("", "_r")
-    ).drop_duplicates(subset=["congress_index"])
-
-    # Create a mask for records that got disambiguated with middle initial
-    disambiguated_indices = set(resolved["congress_index"])
-
-    # Extract congress records that were disambiguated with middle initial
-    middle_initial_resolved = resolved.copy()
-    middle_initial_resolved["match_type"] = "first_middle_last_name"
-    middle_initial_resolved["ambiguous"] = False
-
-    # Identify congress records that are still ambiguous
-    still_ambiguous_indices = (
-        set(pending_ambiguity_determination["congress_index"]) - disambiguated_indices
-    )
-    still_ambiguous = pending_ambiguity_determination[
-        pending_ambiguity_determination["congress_index"].isin(still_ambiguous_indices)
-    ].copy()
-
-    # For ambiguous matches, we need to ensure we only have one row per congress_index/nid pair
-    still_ambiguous = still_ambiguous.drop_duplicates(subset=["congress_index", nid_col])
-    still_ambiguous["match_type"] = "last_name_only"
-    still_ambiguous["ambiguous"] = True
-
-    # Step 5: Create the final result dataframe with all matches
-    logger.info("Creating final results dataframe")
-
-    # Select and rename columns to match expected output format
-    result_columns = {
-        "congress_index": "congress_index",
-        congress_name_col: "congress_name",
-        fjc_name_col: "fjc_name",
-        nid_col: "nid",
-        "match_type": "match_type",
-        "ambiguous": "ambiguous",
-    }
-
-    # Combine unambiguous and ambiguous results
-    results = []
-
-    # Add unambiguous first+last name matches
-    if len(is_unambiguous) > 0:
-        results.append(is_unambiguous[list(result_columns.keys())])
-
-    # Add middle initial resolved matches
-    if len(middle_initial_resolved) > 0:
-        results.append(middle_initial_resolved[list(result_columns.keys())])
-
-    # Add still ambiguous matches
-    if len(still_ambiguous) > 0:
-        results.append(still_ambiguous[list(result_columns.keys())])
-
-    # Combine all results
-    if results:
-        final_results = pd.concat(results, ignore_index=True)
+        logger.info(f"Resolved {len(resolved_by_date)} matches using date proximity")
     else:
-        # Create empty DataFrame with proper columns if no matches were found
-        final_results = pd.DataFrame(columns=list(result_columns.values()))
+        resolved_by_date = pd.DataFrame()
+    
+    # Step 5: Try middle initial disambiguation for remaining ambiguous matches
+    if not ambiguous_matches.empty:
+        mi_resolved = ambiguous_matches.merge(
+            fjc[["first", "last", "mi", nid_col]], 
+            on=["last", "first", "mi"], 
+            how="inner"
+        ).drop_duplicates(subset=["congress_index"])
+        
+        # Remove matches already resolved by date
+        if not resolved_by_date.empty:
+            mi_resolved = mi_resolved[~mi_resolved["congress_index"].isin(resolved_by_date["congress_index"])]
+        
+        logger.info(f"Resolved {len(mi_resolved)} additional matches using middle initial")
+    else:
+        mi_resolved = pd.DataFrame()
 
-    # Rename columns to expected output format
-    final_results = final_results.rename(columns=result_columns)
-
+    # Step 6: Combine all successful matches
+    all_matches = []
+    
+    # Add unambiguous matches
+    if not unambiguous_matches.empty:
+        unambiguous_matches["match_confidence"] = "high_unambiguous"
+        all_matches.append(unambiguous_matches)
+    
+    # Add date-resolved matches
+    if not resolved_by_date.empty:
+        resolved_by_date["match_confidence"] = "high_date_resolved"
+        all_matches.append(resolved_by_date)
+    
+    # Add middle-initial resolved matches
+    if not mi_resolved.empty:
+        mi_resolved["match_confidence"] = "medium_mi_resolved"
+        all_matches.append(mi_resolved)
+    
+    # Combine all matches
+    if all_matches:
+        final_matches = pd.concat(all_matches, ignore_index=True)
+        # Keep only the best match per congress record
+        final_matches = final_matches.drop_duplicates(subset=["congress_index"], keep="first")
+    else:
+        final_matches = pd.DataFrame(columns=["congress_index", nid_col, "match_confidence"])
+    
+    # Step 7: Merge back to original Congress DataFrame
+    result = congress_df.copy()
+    if "congress_index" not in result.columns:
+        result["congress_index"] = result.index
+    
+    # Merge in the NIDs
+    result = result.merge(
+        final_matches[["congress_index", nid_col, "match_confidence"]], 
+        on="congress_index", 
+        how="left"
+    )
+    
+    # Fill unmatched records
+    result[nid_col] = result[nid_col].fillna(pd.NA)
+    result["match_confidence"] = result["match_confidence"].fillna("no_match")
+    
+    # Clean up temporary column
+    result = result.drop(columns=["congress_index"], errors="ignore")
+    
     # Log summary statistics
-    total_matches = len(final_results)
-    unambiguous_count = len(final_results[~final_results["ambiguous"]])
-    ambiguous_count = len(final_results[final_results["ambiguous"]])
+    total_congress = len(result)
+    matched_count = result[nid_col].notna().sum()
+    
+    logger.info(f"Matching complete: {matched_count}/{total_congress} Congress records matched")
+    logger.info("Match confidence distribution:")
+    logger.info(result["match_confidence"].value_counts())
+    
+    return result
 
-    logger.info(f"Name matching complete: {total_matches} total matches")
-    logger.info(f"  - {unambiguous_count} unambiguous matches")
-    logger.info(f"  - {ambiguous_count} ambiguous matches")
 
-    return final_results
+def _resolve_matches_by_date_proximity(
+    ambiguous_matches: pd.DataFrame,
+    fjc_judges_df: pd.DataFrame,
+    congress_date_col: str,
+    temporal_window_days: int,
+    nid_col: str,
+) -> pd.DataFrame:
+    """
+    Resolve ambiguous name matches using nomination date proximity.
+    
+    For each Congress record with multiple FJC matches, find the FJC judge
+    whose nomination date is closest to the Congress nomination date.
+    
+    Args:
+        ambiguous_matches: DataFrame with multiple FJC matches per Congress record
+        fjc_judges_df: Full FJC judges DataFrame with nomination dates
+        congress_date_col: Column name for Congress nomination dates
+        temporal_window_days: Maximum allowed days between nomination dates
+        nid_col: Column name for NID
+        
+    Returns:
+        DataFrame with resolved matches (one per Congress record)
+    """
+    if ambiguous_matches.empty:
+        return pd.DataFrame()
+    
+    resolved_matches = []
+    
+    # Get nomination date columns from FJC data
+    nom_date_cols = [f"nomination_date_({i})" for i in range(1, 7)]
+    available_nom_cols = [col for col in nom_date_cols if col in fjc_judges_df.columns]
+    
+    if not available_nom_cols:
+        logger.warning("No nomination date columns found in FJC data")
+        return pd.DataFrame()
+    
+    # Group by congress_index to resolve each ambiguous case
+    for congress_idx, group in ambiguous_matches.groupby("congress_index"):
+        congress_date = group[congress_date_col].iloc[0]
+        
+        if pd.isna(congress_date):
+            continue  # Skip if no Congress date available
+        
+        congress_dt = pd.to_datetime(congress_date, errors="coerce")
+        if pd.isna(congress_dt):
+            continue  # Skip if date parsing failed
+        
+        best_match = None
+        min_days_diff = float('inf')
+        
+        # Check each potential FJC match
+        for _, match_row in group.iterrows():
+            nid = match_row[nid_col]
+            
+            # Get FJC judge's nomination dates
+            fjc_judge = fjc_judges_df[fjc_judges_df[nid_col] == nid]
+            if fjc_judge.empty:
+                continue
+            
+            fjc_judge = fjc_judge.iloc[0]  # Take first row if multiple
+            
+            # Check all nomination date columns for this judge
+            for nom_col in available_nom_cols:
+                fjc_date = fjc_judge[nom_col]
+                
+                if pd.isna(fjc_date):
+                    continue
+                
+                fjc_dt = pd.to_datetime(fjc_date, errors="coerce")
+                if pd.isna(fjc_dt):
+                    continue
+                
+                # Calculate days difference
+                days_diff = abs((congress_dt - fjc_dt).days)
+                
+                # Check if within temporal window and better than current best
+                if days_diff <= temporal_window_days and days_diff < min_days_diff:
+                    min_days_diff = days_diff
+                    best_match = match_row.copy()
+                    best_match["days_diff"] = days_diff
+                    best_match["fjc_nomination_date"] = fjc_date
+        
+        # Add best match if found
+        if best_match is not None:
+            resolved_matches.append(best_match)
+    
+    if resolved_matches:
+        return pd.DataFrame(resolved_matches)
+    else:
+        return pd.DataFrame()
+
+
+def _apply_temporal_sanity_check(
+    matches_df: pd.DataFrame,
+    congress_df: pd.DataFrame, 
+    fjc_judges_df: pd.DataFrame,
+    nid_col: str,
+) -> pd.DataFrame:
+    """
+    Filter out matches where FJC judge died before the nomination date.
+    
+    Args:
+        matches_df: DataFrame with name matches
+        congress_df: Original Congress DataFrame with receiveddate
+        fjc_judges_df: FJC judges DataFrame with death_year
+        nid_col: Column name for NID
+        
+    Returns:
+        Filtered matches DataFrame
+    """
+    if matches_df.empty:
+        return matches_df
+    
+    # Merge in receiveddate from congress_df
+    matches_with_dates = matches_df.merge(
+        congress_df[["congress_index", "receiveddate"]].drop_duplicates(),
+        on="congress_index",
+        how="left"
+    )
+    
+    # Merge in death_year from fjc_judges_df
+    matches_with_dates = matches_with_dates.merge(
+        fjc_judges_df[[nid_col, "death_year"]].drop_duplicates(subset=[nid_col]),
+        on=nid_col,
+        how="left"
+    )
+    
+    # Extract nomination year from receiveddate
+    matches_with_dates["nomination_year"] = pd.to_datetime(
+        matches_with_dates["receiveddate"], errors="coerce"
+    ).dt.year
+    
+    # Filter out impossible matches (judge died before nomination)
+    before_count = len(matches_with_dates)
+    valid_mask = (
+        matches_with_dates["death_year"].isna() |  # Judge still alive or death unknown
+        (matches_with_dates["nomination_year"].isna()) |  # Nomination date unknown
+        (matches_with_dates["death_year"] >= matches_with_dates["nomination_year"])  # Died after nomination
+    )
+    
+    filtered_matches = matches_with_dates[valid_mask].copy()
+    after_count = len(filtered_matches)
+    
+    if before_count > after_count:
+        logger.info(f"Temporal sanity check removed {before_count - after_count} impossible matches")
+    
+    # Drop the temporary columns
+    return filtered_matches.drop(columns=["receiveddate", "death_year", "nomination_year"], errors="ignore")
 
 
 def _parse_other_nom_text(txt: str) -> dict:

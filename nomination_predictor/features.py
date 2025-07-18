@@ -19,7 +19,7 @@ from loguru import logger
 from nameparser import HumanName
 import pandas as pd
 
-from nomination_predictor.name_matching import perform_exact_name_matching
+#from nomination_predictor.name_matching import perform_exact_name_matching # commented out while that dependency is undergoing overhaul or replacement
 
 NON_JUDICIAL_TITLES = [
         "Administrator",
@@ -576,61 +576,62 @@ def convert_judge_name_format_from_last_comma_first_to_first_then_last(judge_nam
     return result
 
 
-def link_unconfirmed_nominations(
-    cong_df: pd.DataFrame,
-    fjc_other_df: pd.DataFrame,
-    latest_text_col: str = "latestaction_text",
-    cong_name_col: str = "nominee_name",
-) -> pd.DataFrame:
-    """
-    Link un-confirmed Congress rows to FJC other-nominations:
-    • Select Congress rows with missing NID **and** not confirmed.
-    • Exact-name match (last → first → MI) against FJC 'other nominations'.
-    • Fill the NID back into congress_df.  Returns an updated copy.
-
-    Prerequisites:
-    • cong_df must have a "nid" column
-    • cong_df must have a "latestaction_text" column
-    * fjc_other_df must have had expected columns added via name_matching module's "prep_fjc_other(fjc_other_df)"
-    """
-
-    # Filter Congress side
-    mask_missing = cong_df["nid"].isna()
-    mask_not_conf = ~cong_df[latest_text_col].str.contains("confirmed", case=False, na=False)
-    cong_unc = cong_df[mask_missing & mask_not_conf].copy()
-
-    if cong_unc.empty:
-        logger.info("No un-confirmed Congress rows without NID — skipping.")
-        return cong_df
-
-    # Name match (reuse existing function)
-    matches = perform_exact_name_matching(
-        cong_unc,
-        fjc_other_df,
-        congress_name_col=cong_name_col,
-        fjc_name_col="judge_name",
-        nid_col="nid",
-    )
-
-    # Check if there were any matches found
-    if matches.empty or "congress_index" not in matches.columns:
-        logger.info("No matches found between unconfirmed nominations and FJC other nominations.")
-        return cong_df  # Return original dataframe unchanged
-
-    # Keep only unambiguous matches
-    nid_map = matches[~matches["ambiguous"]].set_index("congress_index")["nid"]
-
-    # Fill back into the original dataframe
-    cong_df = cong_df.copy()
-    cong_df.loc[nid_map.index, "nid"] = nid_map.values
-
-    # 5Attach failure reason text for analysis
-    if "fjc_nom_failure_reason" in fjc_other_df.columns:
-        reason_map = fjc_other_df.set_index("nid")["other_nom_failure_reason"]
-        cong_df["failure_reason"] = cong_df["nid"].map(reason_map)
-
-    logger.success(f"Filled {nid_map.notna().sum()} additional NIDs from FJC other-nominations.")
-    return cong_df
+#def link_unconfirmed_nominations(
+#    cong_df: pd.DataFrame,
+#    fjc_other_df: pd.DataFrame,
+#    latest_text_col: str = "latestaction_text",
+#    cong_name_col: str = "nominee_name",
+#) -> pd.DataFrame:
+#    """
+#    DEPRECATED -- dependent upon variant of perform_exact_name_matching() which is undergoing overhaul or replacement
+#    Link un-confirmed Congress rows to FJC other-nominations:
+#    • Select Congress rows with missing NID **and** not confirmed.
+#    • Exact-name match (last → first → MI) against FJC 'other nominations'.
+#    • Fill the NID back into congress_df.  Returns an updated copy.
+#
+#    Prerequisites:
+#    • cong_df must have a "nid" column
+#    • cong_df must have a "latestaction_text" column
+#    * fjc_other_df must have had expected columns added via name_matching module's "prep_fjc_other(fjc_other_df)"
+#    """
+#
+#    # Filter Congress side
+#    mask_missing = cong_df["nid"].isna()
+#    mask_not_conf = ~cong_df[latest_text_col].str.contains("confirmed", case=False, na=False)
+#    cong_unc = cong_df[mask_missing & mask_not_conf].copy()
+#
+#    if cong_unc.empty:
+#        logger.info("No un-confirmed Congress rows without NID — skipping.")
+#        return cong_df
+#
+#    # Name match (reuse existing function)
+#    matches = perform_exact_name_matching(
+#        cong_unc,
+#        fjc_other_df,
+#        congress_name_col=cong_name_col,
+#        fjc_name_col="judge_name",
+#        nid_col="nid",
+#    )
+#
+#    # Check if there were any matches found
+#    if matches.empty or "congress_index" not in matches.columns:
+#        logger.info("No matches found between unconfirmed nominations and FJC other nominations.")
+#        return cong_df  # Return original dataframe unchanged
+#
+#    # Keep only unambiguous matches
+#    nid_map = matches[~matches["ambiguous"]].set_index("congress_index")["nid"]
+#
+#    # Fill back into the original dataframe
+#    cong_df = cong_df.copy()
+#    cong_df.loc[nid_map.index, "nid"] = nid_map.values
+#
+#    # 5Attach failure reason text for analysis
+#    if "fjc_nom_failure_reason" in fjc_other_df.columns:
+#        reason_map = fjc_other_df.set_index("nid")["other_nom_failure_reason"]
+#        cong_df["failure_reason"] = cong_df["nid"].map(reason_map)
+#
+#    logger.success(f"Filled {nid_map.notna().sum()} additional NIDs from FJC other-nominations.")
+#    return cong_df
 
 
 def drop_unhelpfully_uninformative_columns(df_to_clean: pd.DataFrame) -> pd.DataFrame:
@@ -785,3 +786,48 @@ def categorically_bin(
 
     df[dest_col] = result.astype("category")
     return df
+
+
+def summarize_age_days(
+    df: pd.DataFrame,
+    column: str,
+    *,
+    days_per_year: float = 365.25,
+    label: str | None = None,
+) -> None:
+    """Print simple count & descriptive statistics for an *age-in-days* column.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing *column*.
+    column : str
+        Name of the column holding age values in days (nullable numeric).
+    days_per_year : float, default 365.25
+        Conversion denominator for expressing ages in (decimal) years.
+    label : str | None, optional
+        Friendly label used in the printed summary.  Defaults to *column*.
+    """
+
+    if column not in df.columns:
+        raise KeyError(f"Column '{column}' not found in DataFrame")
+
+    label = label or column
+
+    # Coerce to numeric, drop missing
+    days_series = pd.to_numeric(df[column], errors="coerce").dropna()
+    if days_series.empty:
+        print(f"⚠️  No non-missing values for {label}; nothing to summarize.")
+        return
+
+    years_series = days_series / days_per_year
+
+    print(
+        f"Summary for {label}:\n"
+        f"  count  = {days_series.size:,}\n"
+        f"  min    = {years_series.min():.1f} yrs ({int(days_series.min())} d)\n"
+        f"  max    = {years_series.max():.1f} yrs ({int(days_series.max())} d)\n"
+        f"  mean   = {years_series.mean():.1f} yrs ({days_series.mean():.1f} d)\n"
+        f"  median = {years_series.median():.1f} yrs ({days_series.median():.1f} d)\n"
+        f"  std    = {years_series.std():.1f} yrs ({days_series.std():.1f} d)"
+    )
