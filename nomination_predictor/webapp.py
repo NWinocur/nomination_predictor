@@ -463,9 +463,16 @@ def display_similar_case(similar_case_info: Dict[str, Any]):
     st.markdown("**Why this case is similar:**")
     st.write(similar_case_info["explanation"])
 
-    # Show some key details about the similar case
+    # Show FJC Biography URL prominently
     if "similar_case_data" in similar_case_info:
         case_data = similar_case_info["similar_case_data"]
+        
+        # Display FJC Biography URL if available
+        if "fjc_biography_url" in case_data and pd.notna(case_data["fjc_biography_url"]):
+            st.markdown("**📖 Learn More About This Judge:**")
+            fjc_url = case_data["fjc_biography_url"]
+            st.markdown(f"🔗 **[View FJC Biography]({fjc_url})** - Federal Judicial Center profile")
+            st.markdown("---")
 
         st.markdown("**Key details of similar case:**")
 
@@ -657,8 +664,54 @@ def main():
             # Reorder columns to match model expectations
             input_df = input_df[feature_columns]
             
-            # The model's preprocessing pipeline will handle the data type conversion
-            # We just need to ensure categorical features are strings and numeric features are numeric
+            # Fix categorical data types - ensure all categorical features are strings
+            categorical_features = [
+                'aba_rating', 'appointing_president', 'congress_session', 'court_type', 'birth_state',
+                'latestaction_is_div_opp_house', 'latestaction_is_div_opp_senate', 'latestaction_is_fully_div',
+                'latestaction_is_unified', 'nomination_vacancy_reason', 'nomination_of_or_from_location',
+                'nomination_to_position_title', 'nomination_to_court_name', 'nominees_0_organization',
+                'nominees_0_state', 'nomination_term_years', 'party_of_appointing_president',
+                'race_or_ethnicity', 'received_in_senate_political_era', 'school',
+                'seat_level_cong_recategorized', 'seat_id_letters_only', 'senate_vote_type'
+            ]
+            
+            # Convert categorical features to strings and handle missing values
+            for col in categorical_features:
+                if col in input_df.columns:
+                    value = input_df[col].iloc[0]
+                    if pd.isna(value) or value == 0.0:
+                        # Set default string values for missing categorical features
+                        if col == 'appointing_president':
+                            input_df[col] = 'unknown'
+                        elif col == 'birth_state':
+                            input_df[col] = 'unknown'
+                        elif col == 'nomination_of_or_from_location':
+                            input_df[col] = 'unknown'
+                        elif col == 'nomination_to_position_title':
+                            input_df[col] = 'unknown'
+                        elif col == 'nomination_to_court_name':
+                            input_df[col] = 'unknown'
+                        elif col == 'nominees_0_organization':
+                            input_df[col] = 'unknown'
+                        elif col == 'nominees_0_state':
+                            input_df[col] = 'unknown'
+                        elif col == 'received_in_senate_political_era':
+                            input_df[col] = 'unknown'
+                        elif col == 'school':
+                            input_df[col] = 'unknown'
+                        elif col == 'seat_id_letters_only':
+                            input_df[col] = 'unknown'
+                        else:
+                            input_df[col] = str(value)
+                    else:
+                        # Ensure existing values are strings
+                        input_df[col] = str(value)
+            
+            # Debug: Show fixed categorical values
+            st.write("**Debug: Fixed categorical values:**")
+            for col in categorical_features:
+                if col in input_df.columns:
+                    st.write(f"  {col}: {input_df[col].iloc[0]} (type: {type(input_df[col].iloc[0])})")
             
             # Make prediction
             prediction = model.predict(input_df)[0]
@@ -692,6 +745,8 @@ def main():
                             y_test=y_test,
                             trained_model=model,
                             feature_columns=feature_columns,
+                            train_data_full=train_data,  # Pass full training data with all columns
+                            test_data_full=test_data,    # Pass full test data with all columns
                         )
 
                         display_similar_case(similar_case_info)
