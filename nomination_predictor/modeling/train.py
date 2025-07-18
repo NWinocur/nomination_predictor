@@ -16,6 +16,137 @@ import typer
 
 from nomination_predictor.config import MODELS_DIR, PROCESSED_DATA_DIR
 
+# Parameter refinement constants
+PARAMETER_REFINEMENT_CONFIG = {
+    "learning_rate": {"type": "continuous", "delta": 0.02, "min_value": 0.001, "max_value": 0.5},
+    "subsample": {"type": "continuous", "delta": 0.05, "min_value": 0.5, "max_value": 1.0},
+    "colsample_bytree": {"type": "continuous", "delta": 0.05, "min_value": 0.5, "max_value": 1.0},
+    "reg_alpha": {
+        "type": "logarithmic",
+        "min_value": 0,
+        "fallback_range": [0, 0.01, 0.05, 0.1, 0.2],
+    },
+    "reg_lambda": {
+        "type": "logarithmic",
+        "min_value": 0,
+        "fallback_range": [0, 0.01, 0.05, 0.1, 0.2],
+    },
+    "gamma": {"type": "continuous", "delta": 0.1, "min_value": 0, "max_value": 2.0},
+    "n_estimators": {"type": "integer", "delta": 1000, "min_value": 100, "max_value": 10000},
+    "max_depth": {"type": "integer", "delta": 1, "min_value": 3, "max_value": 15},
+    "min_child_weight": {"type": "integer", "delta": 2, "min_value": 1, "max_value": 20},
+}
+
+
+def create_refined_range(
+    param_name: str, current_value: Union[int, float], num_points: int = 5
+) -> list:
+    """
+    Create a refined search range around the best parameter value.
+
+    Args:
+        param_name: Name of the parameter (without 'model__' prefix)
+        current_value: Current best value for the parameter
+        num_points: Number of points to generate in the range
+
+    Returns:
+        List of refined parameter values to search
+
+    Example:
+        >>> create_refined_range('learning_rate', 0.1, 5)
+        [0.08, 0.09, 0.1, 0.11, 0.12]
+    """
+    if param_name not in PARAMETER_REFINEMENT_CONFIG:
+        logger.warning(
+            f"Parameter '{param_name}' not in refinement config. Using current value only."
+        )
+        return [current_value]
+
+    config = PARAMETER_REFINEMENT_CONFIG[param_name]
+    param_type = config["type"]
+
+    if param_type == "continuous":
+        delta = config["delta"]
+        min_val = config["min_value"]
+        max_val = config.get("max_value", float("inf"))
+
+        # Create symmetric range around current value
+        half_points = num_points // 2
+        step = delta / half_points if half_points > 0 else delta
+
+        values = []
+        for i in range(-half_points, half_points + 1):
+            val = current_value + (i * step)
+            val = max(min_val, min(max_val, val))
+            values.append(round(val, 4))
+
+        return sorted(list(set(values)))  # Remove duplicates and sort
+
+    elif param_type == "logarithmic":
+        min_val = config["min_value"]
+
+        if current_value == 0:
+            return config["fallback_range"][:num_points]
+
+        # Logarithmic refinement
+        multipliers = [0.5, 0.8, 1.0, 1.2, 2.0]
+        values = [max(min_val, current_value * mult) for mult in multipliers]
+        return sorted(list(set(values)))[:num_points]
+
+    elif param_type == "integer":
+        delta = config["delta"]
+        min_val = config["min_value"]
+        max_val = config.get("max_value", 10000)
+
+        # Create integer range
+        half_points = num_points // 2
+        step = max(1, delta // half_points) if half_points > 0 else delta
+
+        values = []
+        for i in range(-half_points, half_points + 1):
+            val = int(current_value + (i * step))
+            val = max(min_val, min(max_val, val))
+            values.append(val)
+
+        return sorted(list(set(values)))  # Remove duplicates and sort
+
+    return [current_value]
+
+
+def create_refined_param_grid(best_params: dict, num_points: int = 5) -> dict:
+    """
+    Create a refined parameter grid around the best parameters from a coarse search.
+
+    Args:
+        best_params: Dictionary of best parameters from RandomizedSearchCV
+        num_points: Number of points to generate for each parameter
+
+    Returns:
+        Dictionary suitable for use with RandomizedSearchCV
+
+    Example:
+        >>> best_params = {'model__learning_rate': 0.1, 'model__n_estimators': 1000}
+        >>> refined_grid = create_refined_param_grid(best_params)
+        >>> print(refined_grid)
+        {'model__learning_rate': [0.08, 0.09, 0.1, 0.11, 0.12],
+         'model__n_estimators': [500, 750, 1000, 1250, 1500]}
+    """
+    refined_params = {}
+
+    for param_name, param_value in best_params.items():
+        if param_name.startswith("model__"):
+            # Remove 'model__' prefix for config lookup
+            clean_param_name = param_name.replace("model__", "")
+            refined_range = create_refined_range(clean_param_name, param_value, num_points)
+            refined_params[param_name] = refined_range
+
+            logger.info(f"Refined {param_name}: {param_value} -> {refined_range}")
+        else:
+            # Keep non-model parameters as-is
+            refined_params[param_name] = [param_value]
+
+    return refined_params
+
 
 def save_model_with_metadata(
     model: Union[BaseEstimator, Pipeline],
@@ -28,10 +159,10 @@ def save_model_with_metadata(
 ) -> Path:
     """
     Save a trained model with comprehensive metadata in a standardized format.
-    
+
     This function ensures all models (tuned or untuned) are saved consistently
     for easy loading by the webapp and other components.
-    
+
     Args:
         model: The trained model (sklearn Pipeline or estimator)
         model_name: Base name for the model (e.g., "xgboost_regression")
@@ -40,10 +171,10 @@ def save_model_with_metadata(
         hyperparameters: Dict of model hyperparameters used
         performance_metrics: Dict of model performance metrics (MAE, R2, etc.)
         custom_metadata: Any additional metadata to include
-        
+
     Returns:
         Path to the saved model file
-        
+
     Example:
         >>> model_path = save_model_with_metadata(
         ...     model=trained_pipeline,
@@ -64,14 +195,14 @@ def save_model_with_metadata(
     """
     # Create sanitized timestamp
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    
+
     # Create filename
     filename = f"{model_name}_{timestamp}.pkl"
     model_path = Path(MODELS_DIR) / filename
-    
+
     # Ensure models directory exists
     model_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Prepare comprehensive metadata
     metadata = {
         "model_name": model_name,
@@ -85,39 +216,43 @@ def save_model_with_metadata(
         "performance_metrics": performance_metrics or {},
         "custom_metadata": custom_metadata or {},
     }
-    
+
     # Try to get sklearn version
     try:
         import sklearn
+
         metadata["sklearn_version"] = sklearn.__version__
     except (ImportError, AttributeError):
         pass
-    
+
     # Try to get XGBoost version if it's an XGBoost model
     try:
         import xgboost
+
         if "xgb" in model_name.lower() or "xgboost" in str(type(model)).lower():
             metadata["xgboost_version"] = xgboost.__version__
     except (ImportError, AttributeError):
         pass
-    
+
     # Create the model data structure
     model_data = {
         "model": model,
         "feature_columns": feature_columns,
         "metadata": metadata,
     }
-    
+
     # Save with context manager for safety
     try:
         with open(model_path, "wb") as f:
             pickle.dump(model_data, f)
-        
+
         logger.info(f"Model saved successfully to {model_path}")
-        logger.info(f"Model metadata: {metadata['model_name']} with {metadata['feature_count']} features")
-        
+        logger.info(
+            f"Model metadata: {metadata['model_name']} with {metadata['feature_count']} features"
+        )
+
         return model_path
-        
+
     except Exception as e:
         logger.error(f"Failed to save model to {model_path}: {e}")
         raise
@@ -126,13 +261,13 @@ def save_model_with_metadata(
 def load_model_with_metadata(model_path: Union[str, Path]) -> Dict[str, Any]:
     """
     Load a model saved with save_model_with_metadata().
-    
+
     Args:
         model_path: Path to the saved model file
-        
+
     Returns:
         Dict containing 'model', 'feature_columns', and 'metadata'
-        
+
     Example:
         >>> model_data = load_model_with_metadata("models/xgboost_regression_2025-01-15_143022.pkl")
         >>> model = model_data["model"]
@@ -140,22 +275,22 @@ def load_model_with_metadata(model_path: Union[str, Path]) -> Dict[str, Any]:
         >>> metadata = model_data["metadata"]
     """
     model_path = Path(model_path)
-    
+
     if not model_path.exists():
         raise FileNotFoundError(f"Model file not found: {model_path}")
-    
+
     try:
         with open(model_path, "rb") as f:
             model_data = pickle.load(f)
-        
+
         # Validate structure
         required_keys = ["model", "feature_columns", "metadata"]
         if not all(key in model_data for key in required_keys):
             raise ValueError(f"Model file missing required keys: {required_keys}")
-        
+
         logger.info(f"Model loaded successfully from {model_path}")
         return model_data
-        
+
     except Exception as e:
         logger.error(f"Failed to load model from {model_path}: {e}")
         raise
