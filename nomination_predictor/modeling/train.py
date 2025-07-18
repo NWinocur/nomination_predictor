@@ -237,37 +237,5 @@ def train_model(pipeline, X_train, y_train):
     return pipeline
 
 
-def save_model_with_metadata(model, file_prefix, metadata=None, X_train=None, y_train=None, mae=None, r2=None):
-    """Save model with timestamp and metadata"""
-    
-    # Create a sanitized timestamp
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    
-    # Generate filename
-    filename = MODELS_DIR/f"{file_prefix}_{timestamp}.pkl"
-    
-    # Default metadata if none provided
-    if metadata is None:
-        metadata = {}
-    
-    # Add standard metadata
-    metadata.update({
-        'timestamp': timestamp,
-        'features': X_train.columns.tolist(),
-        'n_features': X_train.shape[1],
-        'metrics': {
-            'mae': float(mae),
-            'r2': float(r2)
-        }
-    })
-    
-    # Save model and metadata
-    with open(filename, 'wb') as f:
-        pickle.dump({'model': model, 'metadata': metadata}, f)
-    
-    logger.info(f"Model saved to {filename} with metadata")
-    return filename
-
-
 if __name__ == "__main__":
     app()
