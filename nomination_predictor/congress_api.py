@@ -27,7 +27,9 @@ if not _tenacity_logger.handlers:
     handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     _tenacity_logger.addHandler(handler)
 
-# Tokens that may indicate a judicial nomination when found in description/position/text etc. fields
+# Tokens that may indicate it could be a judicial nomination when found in description/position/text etc. fields.
+# This is meant to be more permissive.  FIltering back down happens during the data-cleaning notebook downstream.
+# See features.py's NON_JUDICIAL_TITLES collection for that.
 JUDICIAL_DESC_TOKENS = [
     "judge",
     "justice",

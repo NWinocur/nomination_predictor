@@ -12,7 +12,7 @@ The typical format is:
 
 from dataclasses import dataclass
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -31,8 +31,8 @@ class NominationDescription:
     position_title: str = ""
     court_name: str = ""
     term_info: str = ""
-    predecessor_name: str = ""
-    vacancy_reason: str = ""
+    predecessor_name: Optional[str] = None
+    vacancy_reason: Optional[str] = None
     
     # Raw and processed data
     raw_description: str = ""
@@ -147,23 +147,32 @@ class NominationDescription:
         
         # Main parsing patterns for single nominations
         patterns = [
-            # Pattern with term and vice clause: "Name, of Location, to be Position of Court for term of X, vice Predecessor, reason"
+            # Pattern with term and vice clause: "Name, of Location, to be Position for term, vice Predecessor, reason"
             r'^(.+?),\s+of\s+(.+?),\s+to\s+be\s+(.+?)\s+for\s+(?:a\s+)?term\s+(?:of\s+)?(.+?),\s+vice\s+(.+?),\s+(.+?)\.?$',
             
-            # Pattern with term but no vice clause: "Name, of Location, to be Position of Court for term of X"
+            # Pattern with term but no vice clause: "Name, of Location, to be Position for term"
             r'^(.+?),\s+of\s+(.+?),\s+to\s+be\s+(.+?)\s+for\s+(?:a\s+)?term\s+(?:of\s+)?(.+?)\.?$',
             
-            # Pattern with vice clause but no term: "Name, of Location, to be Position of Court, vice Predecessor, reason"
+            # Pattern with vice clause but no term: "Name, of Location, to be Position, vice Predecessor, reason"
             r'^(.+?),\s+of\s+(.+?),\s+to\s+be\s+(.+?),\s+vice\s+(.+?),\s+(.+?)\.?$',
             
-            # Pattern with vice clause but no explicit reason: "Name, of Location, to be Position of Court vice Predecessor, reason"
+            # Pattern with vice clause but no explicit reason: "Name, of Location, to be Position vice Predecessor, reason"
             r'^(.+?),\s+of\s+(.+?)\s+to\s+be\s+(.+?)\s+vice\s+(.+?),\s+(.+?)\.?$',
             
             # Pattern with vice clause but no comma before vice: "Name, of Location, to be Position of Court vice Predecessor reason"
             r'^(.+?),\s+of\s+(.+?),\s+to\s+be\s+(.+?)\s+vice\s+(.+?)\s+(retired|deceased|resigned|elevated)\.?$',
             
+            # Pattern with missing space after location comma: "Name, of Location,to be Position..."
+            r'^(.+?),\s+of\s+(.+?),?to\s+be\s+(.+?)\s+vice\s+(.+?),\s+(.+?)\.?$',
+            
+            # Pattern with "to the" instead of "to be": "Name, of Location, to the Position..."
+            r'^(.+?),\s+of\s+(.+?),\s+to\s+the\s+(.+?)\s+vice\s+(.+?),\s+(.+?)\.?$',
+            
             # Simple pattern without predecessor: "Name, of Location, to be Position of Court"
             r'^(.+?),\s+of\s+(.+?),\s+to\s+be\s+(.+?)\.?$',
+            
+            # Simple pattern with "to the": "Name, of Location, to the Position of Court"
+            r'^(.+?),\s+of\s+(.+?),\s+to\s+the\s+(.+?)\.?$',
         ]
         
         parsed = False
@@ -189,8 +198,9 @@ class NominationDescription:
         self.nominee_name = groups[0].strip() if groups[0] else ""
         location = groups[1].strip() if len(groups) > 1 and groups[1] else ""
         
-        # Clean up location - remove "the" prefix
+        # Clean up location - remove "the" prefix and trailing punctuation
         location = re.sub(r'^the\s+', '', location, flags=re.IGNORECASE)
+        location = re.sub(r'[,;.]+$', '', location)  # Remove trailing punctuation
         self.location = location
         
         # Position and court extraction
@@ -204,9 +214,11 @@ class NominationDescription:
             if groups[3]:  # term info
                 self.term_info = groups[3].strip()
             if groups[4]:  # predecessor
-                self.predecessor_name = self._clean_predecessor_name(groups[4].strip())
+                cleaned_predecessor = self._clean_predecessor_name(groups[4].strip())
+                self.predecessor_name = cleaned_predecessor if cleaned_predecessor else None
             if groups[5]:  # vacancy reason
-                self.vacancy_reason = self._clean_vacancy_reason(groups[5].strip())
+                cleaned_reason = self._clean_vacancy_reason(groups[5].strip())
+                self.vacancy_reason = cleaned_reason if cleaned_reason else None
         # Pattern 2: Name, Location, Position+Court, Term (4 groups)
         elif len(groups) == 4 and 'term' in description.lower():
             if groups[3]:  # term info
@@ -214,9 +226,11 @@ class NominationDescription:
         # Pattern 3: Name, Location, Position+Court, Predecessor, Reason (5 groups)
         elif len(groups) == 5 and 'vice' in description.lower():
             if groups[3]:  # predecessor
-                self.predecessor_name = self._clean_predecessor_name(groups[3].strip())
+                cleaned_predecessor = self._clean_predecessor_name(groups[3].strip())
+                self.predecessor_name = cleaned_predecessor if cleaned_predecessor else None
             if groups[4]:  # vacancy reason
-                self.vacancy_reason = self._clean_vacancy_reason(groups[4].strip())
+                cleaned_reason = self._clean_vacancy_reason(groups[4].strip())
+                self.vacancy_reason = cleaned_reason if cleaned_reason else None
         # Pattern 4: Name, Location, Position+Court (3 groups)
         elif len(groups) == 3:
             # No additional info to extract
@@ -236,12 +250,18 @@ class NominationDescription:
         if not name:
             return ""
         
-        # Remove any trailing punctuation except periods after suffixes
         name = name.strip()
         
-        # Ensure suffix has proper period if it doesn't already
-        if re.search(r'(?:Jr|Sr|III|II|IV)$', name, re.IGNORECASE):
+        # Remove trailing periods unless they're part of a suffix
+        if re.search(r'(?:Jr|Sr|III|II|IV)\.$', name, re.IGNORECASE):
+            # Name ends with a suffix and period - keep as is
+            pass
+        elif re.search(r'(?:Jr|Sr|III|II|IV)$', name, re.IGNORECASE):
+            # Name ends with suffix but no period - add period
             name = re.sub(r'(Jr|Sr|III|II|IV)$', r'\1.', name, flags=re.IGNORECASE)
+        else:
+            # Remove trailing periods from names without suffixes
+            name = re.sub(r'\.$', '', name)
         
         return name
     
@@ -256,7 +276,8 @@ class NominationDescription:
         # Pattern: "Name Jr., retired" -> "retired" (remove everything up to and including suffix)
         reason = re.sub(r'^.*?(?:Jr|Sr|III|II|IV)\.?,\s*', '', reason, flags=re.IGNORECASE)
         
-        return reason.strip()
+        cleaned = reason.strip()
+        return cleaned if cleaned else ""
     
     def _extract_position_and_court(self, position_text: str) -> None:
         """Extract position title and court name from position text."""
@@ -318,14 +339,18 @@ class NominationDescription:
         
         # Patterns for vice clauses - updated to handle all name formats properly
         vice_patterns = [
-            # "vice Name, Jr., reason" - handles names with comma-separated suffixes
-            r'vice\s+([^,]+,\s+(?:Jr|Sr|III|II|IV)\.?),\s+(.+?)(?:\.|$)',
-            # "vice Name (with possible suffix), reason" - handles names with Jr., Sr., etc.
-            r'vice\s+([^,]+(?:\s+(?:Jr|Sr|III|II|IV)\.?)?),\s+(.+?)(?:\.|$)',
+            # "vice First Last, Jr., reason" - handles names with comma-separated suffixes (MOST SPECIFIC FIRST)
+            r'vice\s+([A-Z][a-zA-Z]*(?:\s+[A-Z]\.?)*\s+[A-Z][a-zA-Z]+,\s+(?:Jr|Sr|III|II|IV)\.?),\s+(.+?)(?:\.|$)',
+            # "vice First Last, Jr." - handles names with comma-separated suffixes but no reason
+            r'vice\s+([A-Z][a-zA-Z]*(?:\s+[A-Z]\.?)*\s+[A-Z][a-zA-Z]+,\s+(?:Jr|Sr|III|II|IV)\.?)(?:\.|$)',
             # "vice Name reason" (no comma between name and reason) - for specific reasons
             r'vice\s+([^\s]+(?:\s+[^\s]+)*(?:\s+(?:Jr|Sr|III|II|IV)\.?)?)\s+(retired|deceased|resigned|elevated)(?:\.|$)',
-            # "vice Full Name." - handles names without explicit reason (most general pattern)
-            r'vice\s+([A-Z][a-z]+(?:\s+[A-Z]\.?)*(?:\s+[A-Z][a-z]+)+(?:,\s+(?:Jr|Sr|III|II|IV)\.?)?)(?:\.|$)',
+            # "vice Name (with possible suffix), reason" - handles names with Jr., Sr., etc.
+            r'vice\s+([^,]+(?:\s+(?:Jr|Sr|III|II|IV)\.?)?),\s+(.+?)(?:\.|$)',
+            # "vice Full Name." - handles names without explicit reason (IMPROVED PATTERN)
+            r'vice\s+([A-Z][a-zA-Z]+(?:\s+[A-Z]\.?)*(?:\s+[A-Z][a-zA-Z]+)+(?:,\s+(?:Jr|Sr|III|II|IV)\.?)?)(?:\.|$)',
+            # "vice First Middle Last" - handles names with middle initials/names (BROADER PATTERN)
+            r'vice\s+([A-Z][a-zA-Z]*(?:\s+[A-Z]\.?\s*)*[A-Z][a-zA-Z]+)(?:\.|$)',
             # Just "vice Name" (with possible suffix) - fallback
             r'vice\s+([^,\.]+(?:,\s+(?:Jr|Sr|III|II|IV)\.?)?)(?:\.|$)',
         ]
@@ -345,9 +370,10 @@ class NominationDescription:
                     if re.search(r'(?:Jr|Sr|III|II|IV)$', predecessor_name, re.IGNORECASE):
                         predecessor_name = re.sub(r'(Jr|Sr|III|II|IV)$', r'\1.', predecessor_name, flags=re.IGNORECASE)
                 
-                self.predecessor_name = predecessor_name
+                self.predecessor_name = predecessor_name if predecessor_name else None
                 if len(match.groups()) > 1 and match.group(2):
-                    self.vacancy_reason = match.group(2).strip()
+                    cleaned_reason = match.group(2).strip()
+                    self.vacancy_reason = cleaned_reason if cleaned_reason else None
                 break
     
     def _fallback_parse(self, description: str) -> None:
@@ -360,6 +386,14 @@ class NominationDescription:
         if not has_name_pattern or not has_to_be_pattern:
             # This doesn't look like a valid nomination description
             self.parsing_confidence = "failed"
+            # For failed cases, set all fields to empty strings to match test expectations
+            self.nominee_name = ""
+            self.location = ""
+            self.position_title = ""
+            self.court_name = ""
+            self.term_info = ""
+            self.predecessor_name = ""
+            self.vacancy_reason = ""
             return
         
         self.parsing_confidence = "low"
@@ -390,15 +424,15 @@ class NominationDescription:
         """Convert to dictionary for easy DataFrame integration."""
         return {
             'nominee_name': self.nominee_name or None,
-            'location': self.location or None,
-            'position_title': self.position_title or None,
-            'court_name': self.court_name or None,
-            'term_info': self.term_info or None,
-            'predecessor_name': self.predecessor_name or None,
-            'vacancy_reason': self.vacancy_reason or None,
-            'is_list_nomination': self.is_list_nomination,
-            'parsing_confidence': self.parsing_confidence,
-            'multiple_nominees_count': len(self.multiple_nominees),
+            'nomination_of_or_from_location': self.location or None,
+            'nomination_to_position_title': self.position_title or None,
+            'nomination_to_court_name': self.court_name or None,
+            'nomination_term_info': self.term_info or None,
+            'nomination_predecessor_name': self.predecessor_name or None,
+            'nomination_vacancy_reason': self.vacancy_reason or None,
+            'nomination_is_list_nomination': self.is_list_nomination,
+            'nomination_parsing_confidence': self.parsing_confidence,
+            'nomination_multiple_nominees_count': len(self.multiple_nominees),
         }
     
     def __str__(self) -> str:

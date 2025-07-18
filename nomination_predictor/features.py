@@ -21,6 +21,29 @@ import pandas as pd
 
 from nomination_predictor.name_matching import perform_exact_name_matching
 
+NON_JUDICIAL_TITLES = [
+        "Administrator",
+        "Ambassador",
+        "Assistant",
+        "Attorney",
+        "Board",
+        "Commission",
+        "Chief Financial",
+        "Director",
+        "General Counsel",
+        "Inspector General",
+        "Legal Advisor",
+        "Librarian",
+        "Marshal",
+        "Member of",
+        "President",
+        "Representative",
+        "Secretary of", 
+        "Solicitor General",
+        "Special Counsel",
+        "Special Envoy",
+        "Treasurer",
+    ]
 
 def normalize_dataframe_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -156,25 +179,13 @@ def filter_non_judicial_nominations(frame_with_description: pd.DataFrame) -> pd.
     Returns:
         Tuple of (filtered_nominations_df, filtered_nominees_df)
     """
-    non_judicial_titles = [
-        "Ambassador",
-        "Attorney",
-        "Board",
-        "Commission",
-        "Director",
-        "Marshal",
-        "Assistant",
-        "Representative",
-        "Secretary of",
-        "Member of",
-    ]
 
     # Make copies to avoid SettingWithCopyWarning
     df_copy = frame_with_description.copy()
 
     # Find indices of rows with non-judicial titles in "description"
     non_judicial_mask = df_copy["description"].str.contains(
-        "|".join(non_judicial_titles), na=False
+        "|".join(NON_JUDICIAL_TITLES), na=False
     )
     non_judicial_indices = df_copy.loc[non_judicial_mask].index
 

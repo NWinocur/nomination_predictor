@@ -232,6 +232,28 @@ SINGLE_NOMINATION_TEST_CASES = [
         id="associate_appeals_reason_for_vacancy_missing"
     ),
     pytest.param(
+        "Chester J. Straub, of New York,to be United States Circuit Judge for the Second Circuit, vice Joseph M. McLaughlin, retired.",
+        "Chester J. Straub",
+        "New York",
+        "United States Circuit Judge",
+        "Second Circuit",
+        "Joseph M. McLaughlin",
+        "retired",
+        "high",
+        id="circuit_judge_retired"
+    ),
+    pytest.param(
+        "Sonia Sotomayor, of New York, to the United States District Judge for the Southern District of New York vice John M. Walker, Jr., elevated.",
+        "Sonia Sotomayor",
+        "New York",
+        "United States District Judge",
+        "Southern District of New York",
+        "John M. Walker, Jr.",
+        "elevated",
+        "high",
+        id="district_judge_elevated"
+    ),
+    pytest.param(
         "",
         "",
         "",
@@ -620,15 +642,15 @@ def test_batch_processing_with_pandas():
     # Verify DataFrame structure
     assert len(parsed_df) == 3
     assert 'nominee_name' in parsed_df.columns
-    assert 'court_name' in parsed_df.columns
-    assert 'predecessor_name' in parsed_df.columns
-    assert 'parsing_confidence' in parsed_df.columns
+    assert 'nomination_to_court_name' in parsed_df.columns
+    assert 'nomination_predecessor_name' in parsed_df.columns
+    assert 'nomination_parsing_confidence' in parsed_df.columns
     
     # Verify specific parsing results
     assert parsed_df.iloc[0]['nominee_name'] == "John Smith"
-    assert parsed_df.iloc[0]['court_name'] == "Northern District of California"
-    assert parsed_df.iloc[1]['predecessor_name'] == "Robert Brown"
-    assert parsed_df.iloc[2]['court_name'] == "Southern District of Texas"
+    assert parsed_df.iloc[0]['nomination_to_court_name'] == "Northern District of California"
+    assert parsed_df.iloc[1]['nomination_predecessor_name'] == "Robert Brown"
+    assert parsed_df.iloc[2]['nomination_to_court_name'] == "Southern District of Texas"
 
 
 def test_dataframe_integration():
@@ -650,13 +672,13 @@ def test_dataframe_integration():
     
     # Verify parsed columns are added
     assert 'nominee_name' in result_df.columns
-    assert 'court_name' in result_df.columns
-    assert 'predecessor_name' in result_df.columns
+    assert 'nomination_to_court_name' in result_df.columns
+    assert 'nomination_predecessor_name' in result_df.columns
     
     # Verify parsing results
     assert result_df.iloc[0]['nominee_name'] == "John Smith"
-    assert result_df.iloc[1]['predecessor_name'] == "Robert Brown"
-    assert result_df.iloc[2]['court_name'] == "Southern District of Texas"
+    assert result_df.iloc[1]['nomination_predecessor_name'] == "Robert Brown"
+    assert result_df.iloc[2]['nomination_to_court_name'] == "Southern District of Texas"
 
 
 def test_nomination_description_string_representation():
