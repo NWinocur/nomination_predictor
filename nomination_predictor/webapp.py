@@ -132,41 +132,49 @@ def get_feature_input_widgets(feature_columns: list) -> Dict[str, Any]:
     """Create input widgets for all features."""
     inputs = {}
 
-    # Organize features into categories for better UX
+    # Organize features    # Categorize features for better organization (ensuring no duplicates)
+    categorized_features = set()
+    
+    # Priority order: demographic -> education -> position -> political -> timing -> other
     demographic_features = [
         col
         for col in feature_columns
-        if any(term in col.lower() for term in ["age", "gender", "race", "birth", "death"])
+        if any(term in col.lower() for term in ["age", "gender", "race", "ethnicity"])
     ]
+    categorized_features.update(demographic_features)
+    
     education_features = [
         col
         for col in feature_columns
-        if any(term in col.lower() for term in ["degree", "education", "school", "university"])
+        if col not in categorized_features and any(term in col.lower() for term in ["degree", "education", "school", "university"])
     ]
+    categorized_features.update(education_features)
+    
     position_features = [
         col
         for col in feature_columns
-        if any(term in col.lower() for term in ["seat", "court", "position", "level"])
+        if col not in categorized_features and any(term in col.lower() for term in ["seat", "court", "position", "level"])
     ]
+    categorized_features.update(position_features)
+    
     political_features = [
         col
         for col in feature_columns
-        if any(term in col.lower() for term in ["political", "party", "president", "senate"])
+        if col not in categorized_features and any(term in col.lower() for term in ["political", "party", "president", "senate"])
     ]
+    categorized_features.update(political_features)
+    
     timing_features = [
         col
         for col in feature_columns
-        if any(term in col.lower() for term in ["date", "days", "year", "time"])
+        if col not in categorized_features and any(term in col.lower() for term in ["date", "days", "year", "time"])
     ]
+    categorized_features.update(timing_features)
+    
     other_features = [
         col
         for col in feature_columns
-        if col
-        not in demographic_features
-        + education_features
-        + position_features
-        + political_features
-        + timing_features
+        if col not in categorized_features
     ]
 
     # Create tabs for different feature categories
@@ -209,8 +217,101 @@ def get_feature_input_widgets(feature_columns: list) -> Dict[str, Any]:
 
 def create_feature_widget(feature_name: str) -> Any:
     """Create appropriate input widget based on feature name and type."""
-    # Common feature patterns and their appropriate widgets
-    if "age" in feature_name.lower() and "days" in feature_name.lower():
+    
+    # 🎯 HIGH IMPORTANCE CATEGORICAL FEATURES (Based on model importance)
+    if feature_name == "congress_session":
+        return st.selectbox(
+            "Congress Session",
+            options=[1, 2],
+            index=0,
+            format_func=lambda x: f"Session {x} ({'1st' if x == 1 else '2nd'} session)",
+            help="1st or 2nd session of Congress",
+            key=f"input_{feature_name}",
+        )
+    elif feature_name == "party_of_appointing_president":
+        return st.selectbox(
+            "Appointing President's Party",
+            options=["D", "R"],  # Actual values from training data
+            index=1,  # Default to R (most common)
+            format_func=lambda x: "Democratic" if x == "D" else "Republican",
+            help="Political party of the appointing president",
+            key=f"input_{feature_name}",
+        )
+    elif feature_name == "court_type":
+        return st.selectbox(
+            "Court Type",
+            options=["u.s. district court", "u.s. court of appeals", "other", "supreme court"],  # Actual values
+            index=0,  # Default to district court (most common)
+            help="Type of federal court",
+            key=f"input_{feature_name}",
+        )
+    elif feature_name == "race_or_ethnicity":
+        return st.selectbox(
+            "Race or Ethnicity",
+            options=["White", "African American", "Hispanic", "Asian American", "American Indian"],  # Top 5 actual values
+            index=0,  # Default to White (most common)
+            help="Nominee's race or ethnicity",
+            key=f"input_{feature_name}",
+        )
+    elif feature_name == "seat_level_cong_recategorized":
+        return st.selectbox(
+            "Seat Level",
+            options=["district", "circuit", "other"],  # Actual values from training data
+            index=0,  # Default to district (most common)
+            help="Level of court position",
+            key=f"input_{feature_name}",
+        )
+    elif feature_name == "senate_vote_type":
+        return st.selectbox(
+            "Senate Vote Type",
+            options=["Voice", "Roll Call"],  # Actual values from training data
+            index=0,  # Default to Voice (most common)
+            help="Type of Senate confirmation vote",
+            key=f"input_{feature_name}",
+        )
+    elif feature_name == "aba_rating":
+        return st.selectbox(
+            "ABA Rating",
+            options=["Well Qualified", "Qualified", "Not Qualified", "Exceptionally Well Qualified"],  # Actual values
+            index=0,  # Default to Well Qualified (most common)
+            help="American Bar Association rating",
+            key=f"input_{feature_name}",
+        )
+    elif feature_name == "nomination_vacancy_reason":
+        return st.selectbox(
+            "Vacancy Reason",
+            options=["retired", "retiring", "elevated", "deceased", "resigned"],  # Top 5 actual values
+            index=0,  # Default to retired (most common)
+            help="Reason for the judicial vacancy",
+            key=f"input_{feature_name}",
+        )
+    
+    # 🎯 BOOLEAN FEATURES (High importance)
+    elif feature_name == "pres_term_is_latter_term":
+        return st.checkbox(
+            "President's Latter Term",
+            value=False,
+            help="Is this the president's second/latter term?",
+            key=f"input_{feature_name}",
+        )
+    elif feature_name == "statute_authorized_new_seat_bool":
+        return st.checkbox(
+            "Statute Authorized New Seat",
+            value=False,
+            help="Is this a new seat authorized by statute?",
+            key=f"input_{feature_name}",
+        )
+    elif feature_name.startswith("latestaction_is_"):
+        action_type = feature_name.replace("latestaction_is_", "").replace("_", " ").title()
+        return st.checkbox(
+            f"Latest Action: {action_type}",
+            value=False,
+            help=f"Is the latest action {action_type.lower()}?",
+            key=f"input_{feature_name}",
+        )
+    
+    # 🎯 NUMERIC FEATURES WITH SPECIFIC RANGES
+    elif "age" in feature_name.lower() and "days" in feature_name.lower():
         return st.number_input(
             f"{feature_name.replace('_', ' ').title()}",
             min_value=0,
@@ -218,30 +319,17 @@ def create_feature_widget(feature_name: str) -> Any:
             value=15000,
             step=365,
             help="Age in days (approximately 15000 = 41 years old)",
+            key=f"input_{feature_name}",
         )
     elif "degree_level" in feature_name.lower():
         return st.selectbox(
-            f"{feature_name.replace('_', ' ').title()}",
-            options=[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
-            index=1,  # Default to JD (2.0)
-            help="1=High School, 2=JD, 3=Masters, 4=PhD, etc.",
+            "Highest Degree Level",
+            options=[2.0, 3.0, 5.0, 6.0],  # Actual values from data
+            index=2,  # Default to 5.0 (most common)
+            format_func=lambda x: f"Level {x}",
+            help="Highest educational degree level (actual values from data)",
+            key=f"input_{feature_name}",
         )
-    elif "seat_level" in feature_name.lower():
-        return st.selectbox(
-            f"{feature_name.replace('_', ' ').title()}",
-            options=["district", "circuit", "other"],
-            index=0,
-            help="Level of court position",
-        )
-    elif "political_era" in feature_name.lower():
-        return st.selectbox(
-            f"{feature_name.replace('_', ' ').title()}",
-            options=["pre‑2013", "2013‑2017", "2017‑2021", "2021‑present"],
-            index=0,
-            help="Political era when nomination was received",
-        )
-    elif "boolean" in str(type(feature_name)).lower() or feature_name.lower().startswith("is_"):
-        return st.checkbox(f"{feature_name.replace('_', ' ').title()}", value=False)
     elif "year" in feature_name.lower():
         return st.number_input(
             f"{feature_name.replace('_', ' ').title()}",
@@ -249,22 +337,55 @@ def create_feature_widget(feature_name: str) -> Any:
             max_value=2025,
             value=1995,
             step=1,
+            key=f"input_{feature_name}",
         )
     elif "days" in feature_name.lower():
         return st.number_input(
             f"{feature_name.replace('_', ' ').title()}",
             min_value=0,
-            max_value=2000,
+            max_value=5000,
             value=100,
             step=1,
             help="Number of days",
+            key=f"input_{feature_name}",
+        )
+    elif "congress_num" in feature_name.lower():
+        return st.number_input(
+            "Congress Number",
+            min_value=1,
+            max_value=120,
+            value=117,
+            step=1,
+            help="Congressional session number (e.g., 117th Congress)",
+            key=f"input_{feature_name}",
+        )
+    elif "sequence" in feature_name.lower():
+        return st.number_input(
+            f"{feature_name.replace('_', ' ').title()}",
+            min_value=0,
+            max_value=10,
+            value=1,
+            step=1,
+            help="Sequence number in career/education",
+            key=f"input_{feature_name}",
+        )
+    elif "count" in feature_name.lower():
+        return st.number_input(
+            f"{feature_name.replace('_', ' ').title()}",
+            min_value=0,
+            max_value=100,
+            value=5,
+            step=1,
+            help="Count of items",
+            key=f"input_{feature_name}",
         )
     else:
-        # Default to number input for most features
+        # Default to number input for remaining features
         return st.number_input(
             f"{feature_name.replace('_', ' ').title()}",
             value=0.0,
             help=f"Enter value for {feature_name}",
+            key=f"input_{feature_name}",
         )
 
 
@@ -526,7 +647,19 @@ def main():
         try:
             # Create input DataFrame
             input_df = pd.DataFrame([feature_inputs])
-
+            
+            # Ensure all columns are present and in correct order
+            missing_cols = set(feature_columns) - set(input_df.columns)
+            if missing_cols:
+                st.error(f"Missing columns: {missing_cols}")
+                return
+                
+            # Reorder columns to match model expectations
+            input_df = input_df[feature_columns]
+            
+            # The model's preprocessing pipeline will handle the data type conversion
+            # We just need to ensure categorical features are strings and numeric features are numeric
+            
             # Make prediction
             prediction = model.predict(input_df)[0]
 
