@@ -1,11 +1,11 @@
 """This file shall contain code to train a model."""
 
-import itertools
-import os
-import pickle
 from collections import Counter
 from datetime import datetime
+import itertools
+import os
 from pathlib import Path
+import pickle
 from typing import Any, Dict, Optional, Union
 
 from loguru import logger
@@ -38,7 +38,7 @@ def save_model_with_metadata(
         feature_columns: List of feature column names used for training
         training_data_info: Dict with info about training data (shape, target, etc.)
         hyperparameters: Dict of model hyperparameters used
-        performance_metrics: Dict of model performance metrics (RMSE, R2, etc.)
+        performance_metrics: Dict of model performance metrics (MAE, R2, etc.)
         custom_metadata: Any additional metadata to include
         
     Returns:
@@ -55,8 +55,8 @@ def save_model_with_metadata(
         ...         "target_column": "days_nom_to_conf"
         ...     },
         ...     performance_metrics={
-        ...         "train_rmse": 45.2,
-        ...         "test_rmse": 48.7,
+        ...         "train_mae": 45.2,
+        ...         "test_mae": 48.7,
         ...         "train_r2": 0.85,
         ...         "test_r2": 0.82
         ...     }

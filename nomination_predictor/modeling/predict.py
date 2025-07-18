@@ -17,14 +17,205 @@ from nomination_predictor.modeling.similarity import find_most_similar_case
 app = typer.Typer()
 
 
-def predict_model(pipeline, X_test):
-    """Predict using the trained model with a simple progress indicator"""
-    logger.info(f"Predicting using model on {X_test.shape[0]} samples, {X_test.shape[1]} features")
-    with tqdm(total=1, desc="Predicting") as progress_bar:
-        predictions = pipeline.predict(X_test)
-        progress_bar.update(1)
-    logger.info("Prediction completed")
-    return predictions
+def train_and_evaluate_model(
+    model,
+    X_train: pd.DataFrame,
+    X_test: pd.DataFrame,
+    y_train: pd.Series,
+    y_test: pd.Series,
+    model_name: str = "model",
+    show_progress: bool = True
+) -> dict:
+    """
+    Train a model and evaluate it with comprehensive metrics and reporting.
+    
+    Args:
+        model: Untrained model or pipeline
+        X_train, X_test: Training and test features
+        y_train, y_test: Training and test targets
+        model_name: Name for display purposes
+        show_progress: Whether to show progress bars
+        
+    Returns:
+        dict: Contains trained model, predictions, and metrics
+    """
+    import time
+
+    from sklearn.metrics import mean_absolute_error, r2_score
+    
+    logger.info(f"Training {model_name} on {X_train.shape[0]} samples, {X_train.shape[1]} features")
+    
+    # Training
+    start_time = time.time()
+    if show_progress:
+        with tqdm(total=1, desc=f"Training {model_name}") as pbar:
+            model.fit(X_train, y_train)
+            pbar.update(1)
+    else:
+        model.fit(X_train, y_train)
+    
+    training_time = time.time() - start_time
+    logger.info(f"Training completed in {training_time:.2f} seconds")
+    
+    # Predictions
+    if show_progress:
+        with tqdm(total=2, desc="Making predictions") as pbar:
+            y_train_pred = model.predict(X_train)
+            pbar.update(1)
+            y_test_pred = model.predict(X_test)
+            pbar.update(1)
+    else:
+        y_train_pred = model.predict(X_train)
+        y_test_pred = model.predict(X_test)
+    
+    # Calculate metrics
+    train_mae = mean_absolute_error(y_train, y_train_pred)
+    test_mae = mean_absolute_error(y_test, y_test_pred)
+    train_r2 = r2_score(y_train, y_train_pred)
+    test_r2 = r2_score(y_test, y_test_pred)
+    
+    # Return comprehensive results
+    return {
+        "model": model,
+        "training_time": training_time,
+        "predictions": {
+            "y_train_pred": y_train_pred,
+            "y_test_pred": y_test_pred
+        },
+        "metrics": {
+            "train_mae": train_mae,
+            "test_mae": test_mae,
+            "train_r2": train_r2,
+            "test_r2": test_r2
+        },
+        "data_info": {
+            "n_train_samples": len(X_train),
+            "n_test_samples": len(X_test),
+            "n_features": len(X_train.columns),
+            "feature_columns": X_train.columns.tolist()
+        }
+    }
+
+
+def evaluate_and_report_model(
+    results: dict,
+    y_train: pd.Series,
+    y_test: pd.Series,
+    model_name: str = "Model",
+    save_model: bool = False,
+    hyperparameters: dict = None
+) -> dict:
+    """
+    Comprehensive model evaluation and reporting with optional model saving.
+    
+    Args:
+        results: Output from train_and_evaluate_model()
+        y_train, y_test: Training and test targets
+        model_name: Name for display and saving
+        save_model: Whether to save the model with metadata
+        hyperparameters: Model hyperparameters for metadata
+        
+    Returns:
+        dict: Enhanced results with interpretation and model path (if saved)
+    """
+    from nomination_predictor.modeling.train import save_model_with_metadata
+    
+    metrics = results["metrics"]
+    model = results["model"]
+    
+    # Print comprehensive evaluation
+    print(f"\n{'='*60}")
+    print(f"📊 {model_name.upper()} EVALUATION RESULTS")
+    print(f"{'='*60}")
+    
+    # Performance metrics
+    print(f"\n🎯 PERFORMANCE METRICS:")
+    print(f"  • Training MAE: {metrics['train_mae']:.2f} days")
+    print(f"  • Test MAE:     {metrics['test_mae']:.2f} days")
+    print(f"  • Training R²:  {metrics['train_r2']:.4f}")
+    print(f"  • Test R²:      {metrics['test_r2']:.4f}")
+    print(f"  • Training time: {results['training_time']:.2f} seconds")
+    
+    # Interpret results using existing function
+    interpret_results(metrics['test_mae'], metrics['test_r2'], y_train)
+    
+    # Model complexity
+    print(f"\n🔧 MODEL COMPLEXITY:")
+    summarize_model_complexity(model)
+    
+    # Save model if requested
+    model_path = None
+    if save_model:
+        model_path = save_model_with_metadata(
+            model=model,
+            model_name=model_name.lower().replace(" ", "_"),
+            feature_columns=results["data_info"]["feature_columns"],
+            training_data_info={
+                "n_train_samples": results["data_info"]["n_train_samples"],
+                "n_test_samples": results["data_info"]["n_test_samples"],
+                "n_features": results["data_info"]["n_features"],
+                "target_column": "days_nom_to_conf",
+                "training_time_seconds": results["training_time"]
+            },
+            hyperparameters=hyperparameters or {},
+            performance_metrics=metrics,
+            custom_metadata={
+                "model_type": "trained_model",
+                "evaluation_metrics": "MAE (Mean Absolute Error) and R²",
+                "notes": f"Model trained and evaluated using comprehensive workflow"
+            }
+        )
+        print(f"\n💾 Model saved to: {model_path}")
+    
+    # Return enhanced results
+    enhanced_results = results.copy()
+    enhanced_results["model_path"] = model_path
+    enhanced_results["interpretation"] = {
+        "mae_category": _categorize_mae(metrics['test_mae']),
+        "r2_category": _categorize_r2(metrics['test_r2']),
+        "overall_quality": _assess_overall_quality(metrics['test_mae'], metrics['test_r2'])
+    }
+    
+    return enhanced_results
+
+
+def _categorize_mae(mae: float) -> str:
+    """Categorize MAE performance."""
+    if mae < 30:
+        return "excellent"
+    elif mae < 60:
+        return "good"
+    elif mae < 90:
+        return "fair"
+    else:
+        return "needs_improvement"
+
+
+def _categorize_r2(r2: float) -> str:
+    """Categorize R² performance."""
+    if r2 > 0.7:
+        return "strong"
+    elif r2 > 0.5:
+        return "moderate"
+    elif r2 > 0.3:
+        return "fair"
+    else:
+        return "weak"
+
+
+def _assess_overall_quality(mae: float, r2: float) -> str:
+    """Assess overall model quality."""
+    mae_cat = _categorize_mae(mae)
+    r2_cat = _categorize_r2(r2)
+    
+    if mae_cat == "excellent" and r2_cat in ["strong", "moderate"]:
+        return "production_ready"
+    elif mae_cat in ["excellent", "good"] and r2_cat in ["strong", "moderate", "fair"]:
+        return "good_performance"
+    elif mae_cat in ["good", "fair"] and r2_cat in ["moderate", "fair"]:
+        return "acceptable"
+    else:
+        return "needs_improvement"
 
 
 def interpret_results(mae, r2, y_train):
@@ -35,8 +226,6 @@ def interpret_results(mae, r2, y_train):
         mae (float): Mean Absolute Error of the model
         r2 (float): R2 metric of the model
         y_train (array-like): Actual values of the training set
-
-    Returns:
     """
     # Detailed interpretation of MAE
     print(f"\n===== Mean Absolute Error (MAE): {mae:.2f} =====")
@@ -178,6 +367,47 @@ def summarize_model_complexity(model, model_path: str | Path | None = None) -> N
     if model_path is not None and Path(model_path).exists():
         size_mb = Path(model_path).stat().st_size / (1024**2)
         print(f"  • Serialized size on disk : {size_mb:.1f} MB")
+
+
+def compare_models(results_list: list, model_names: list) -> None:
+    """
+    Compare multiple model results and display a comparison table.
+    
+    Args:
+        results_list: List of results from train_and_evaluate_model()
+        model_names: List of model names for display
+    """
+    print(f"\n{'='*80}")
+    print(f"📊 MODEL COMPARISON")
+    print(f"{'='*80}")
+    
+    # Create comparison table
+    print(f"{'Model':<20} {'Train MAE':<12} {'Test MAE':<12} {'Train R²':<10} {'Test R²':<10} {'Time (s)':<10}")
+    print("-" * 80)
+    
+    best_test_mae = float('inf')
+    best_model_name = ""
+    
+    for results, name in zip(results_list, model_names):
+        metrics = results["metrics"]
+        time_taken = results["training_time"]
+        
+        print(f"{name:<20} {metrics['train_mae']:<12.2f} {metrics['test_mae']:<12.2f} "
+              f"{metrics['train_r2']:<10.4f} {metrics['test_r2']:<10.4f} {time_taken:<10.2f}")
+        
+        if metrics['test_mae'] < best_test_mae:
+            best_test_mae = metrics['test_mae']
+            best_model_name = name
+    
+    print("-" * 80)
+    print(f"🏆 Best model: {best_model_name} (Test MAE: {best_test_mae:.2f} days)")
+    
+    # Calculate improvements
+    if len(results_list) >= 2:
+        baseline_mae = results_list[0]["metrics"]["test_mae"]
+        best_mae = min(r["metrics"]["test_mae"] for r in results_list)
+        improvement = ((baseline_mae - best_mae) / baseline_mae) * 100
+        print(f"📈 Improvement over baseline: {improvement:.1f}% ({baseline_mae:.2f} → {best_mae:.2f} days)")
 
 
 def find_similar_historical_case(
