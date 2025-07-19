@@ -418,6 +418,8 @@ def find_similar_historical_case(
     y_test: pd.Series,
     trained_model,
     feature_columns: list = None,
+    train_data_full: pd.DataFrame = None,
+    test_data_full: pd.DataFrame = None,
 ) -> dict:
     """
     Find the most similar historical case for a "your scenario is most similar to..." UI feature.
@@ -434,18 +436,29 @@ def find_similar_historical_case(
         The trained model to extract feature importances from
     feature_columns : list, optional
         List of feature column names to use
+    train_data_full, test_data_full : pd.DataFrame, optional
+        Full training and test data with all columns (including fjc_biography_url)
 
     Returns
     -------
     dict
         Dictionary containing similar case info and explanation
     """
-    # Combine target values back with features for context
-    train_with_target = X_train.copy()
-    train_with_target["target"] = y_train
-
-    test_with_target = X_test.copy()
-    test_with_target["target"] = y_test
+    # Use full data if provided, otherwise fall back to feature data
+    if train_data_full is not None and test_data_full is not None:
+        train_with_target = train_data_full.copy()
+        test_with_target = test_data_full.copy()
+        # Ensure target column exists
+        if "target" not in train_with_target.columns:
+            train_with_target["target"] = y_train
+        if "target" not in test_with_target.columns:
+            test_with_target["target"] = y_test
+    else:
+        # Fallback to original behavior
+        train_with_target = X_train.copy()
+        train_with_target["target"] = y_train
+        test_with_target = X_test.copy()
+        test_with_target["target"] = y_test
 
     # Find most similar case
     similar_case = find_most_similar_case(
